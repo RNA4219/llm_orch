@@ -2,6 +2,7 @@ import os
 os.environ.setdefault("ORCH_CONFIG_DIR", "config")
 from fastapi.testclient import TestClient
 from src.orch.server import app
+from src.orch import server as server_mod
 
 def test_health():
     c = TestClient(app)
@@ -12,6 +13,7 @@ def test_health():
 def test_chat_dummy():
     # use dummy providers file for offline test
     os.environ["ORCH_USE_DUMMY"] = "1"
+    server_mod.init_dependencies(use_dummy=True)
     c = TestClient(app)
     r = c.post("/v1/chat/completions", json={
         "model":"dummy",
@@ -21,3 +23,21 @@ def test_chat_dummy():
     data = r.json()
     assert data["object"] == "chat.completion"
     assert data["choices"][0]["message"]["role"] == "assistant"
+
+
+def test_reinitialize_dependencies_for_dummy_provider():
+    os.environ["ORCH_USE_DUMMY"] = "0"
+    server_mod.init_dependencies(use_dummy=False)
+    os.environ["ORCH_USE_DUMMY"] = "1"
+    server_mod.init_dependencies(use_dummy=True)
+    c = TestClient(app)
+    r = c.post(
+        "/v1/chat/completions",
+        json={
+            "model": "dummy",
+            "messages": [{"role": "user", "content": "ping"}],
+        },
+    )
+    assert r.status_code == 200
+    payload = r.json()
+    assert payload["choices"][0]["message"]["content"].startswith("dummy:")

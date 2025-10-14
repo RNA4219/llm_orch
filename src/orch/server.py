@@ -1,24 +1,47 @@
-import os
 import asyncio
+import os
 import time
+
 from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse
-from .router import load_config, RoutePlanner
+
 from .metrics import MetricsLogger
-from .rate_limiter import ProviderGuards
-from .types import ChatRequest, chat_response_from_provider
 from .providers import ProviderRegistry
+from .rate_limiter import ProviderGuards
+from .router import LoadedConfig, RoutePlanner, load_config
+from .types import ChatRequest, chat_response_from_provider
 
 app = FastAPI(title="llm-orch")
 
-CONFIG_DIR = os.environ.get("ORCH_CONFIG_DIR", os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "config"))
-USE_DUMMY = bool(int(os.environ.get("ORCH_USE_DUMMY", "0")))
+CONFIG_DIR = os.environ.get(
+    "ORCH_CONFIG_DIR",
+    os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "config"),
+)
+METRICS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "metrics")
 
-cfg = load_config(CONFIG_DIR, use_dummy=USE_DUMMY)
-providers = ProviderRegistry(cfg.providers)
-guards = ProviderGuards(cfg.providers)
-planner = RoutePlanner(cfg.router, cfg.providers)
-metrics = MetricsLogger(os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "metrics"))
+cfg: LoadedConfig
+providers: ProviderRegistry
+guards: ProviderGuards
+planner: RoutePlanner
+metrics: MetricsLogger
+
+
+def init_dependencies(*, use_dummy: bool) -> None:
+    global cfg, providers, guards, planner, metrics
+
+    cfg = load_config(CONFIG_DIR, use_dummy=use_dummy)
+    providers = ProviderRegistry(cfg.providers)
+    guards = ProviderGuards(cfg.providers)
+    planner = RoutePlanner(cfg.router, cfg.providers)
+    metrics = MetricsLogger(METRICS_DIR)
+
+
+@app.on_event("startup")
+async def _startup_init_dependencies() -> None:
+    init_dependencies(use_dummy=bool(int(os.environ.get("ORCH_USE_DUMMY", "0"))))
+
+
+init_dependencies(use_dummy=bool(int(os.environ.get("ORCH_USE_DUMMY", "0"))))
 
 @app.get("/healthz")
 async def healthz():
@@ -34,13 +57,20 @@ async def chat_completions(req: Request, body: ChatRequest, x_orch_task_kind: st
     usage_prompt = 0
     usage_completion = 0
 
+    payload_messages = [message.model_dump() for message in body.messages]
+
     for provider_name in [route.primary] + route.fallback:
         attempt += 1
         prov = providers.get(provider_name)
         guard = guards.get(provider_name)
         async with guard:
             try:
-                resp = await prov.chat(body.model, body.messages, temperature=body.temperature, max_tokens=body.max_tokens)
+                resp = await prov.chat(
+                    body.model,
+                    payload_messages,
+                    temperature=body.temperature,
+                    max_tokens=body.max_tokens,
+                )
                 latency = int((time.perf_counter() - start) * 1000)
                 usage_prompt = resp.usage_prompt_tokens or 0
                 usage_completion = resp.usage_completion_tokens or 0
