@@ -25,6 +25,7 @@ jobs:
               number: context.issue.number,
               headers: {
                 accept: 'application/vnd.github.merge-info-preview+json',
+                'GraphQL-Features': 'pull-request-review-decision',
               },
             });
             const decision = result.repository.pullRequest?.reviewDecision;
