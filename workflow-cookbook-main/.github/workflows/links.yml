@@ -1,0 +1,20 @@
+name: links
+on:
+  pull_request:
+  schedule: [{ cron: "0 3 * * 1" }]
+permissions: { contents: read, issues: write }
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: lycheeverse/lychee-action@v2
+        # lychee v0.20.x 以降では --exclude-mail が廃止されており、既定でメールリンクを除外する
+        with:
+          args: >-
+            --verbose --no-progress
+            --max-redirects 5
+            --timeout 20
+            **/*.md
+        env:
+          GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}

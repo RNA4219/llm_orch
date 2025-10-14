@@ -1,0 +1,35 @@
+name: "Bug report"
+description: "不具合報告（AI/自動化前提）"
+labels: ["type:bug", "triage:needed"]
+body:
+  - type: input
+    id: intent_id
+    attributes: { label: Intent ID, description: "BLUEPRINT / TASK のID" }
+    validations: { required: true }
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options: ["spec", "tests", "pipeline", "docs", "release"]
+    validations: { required: true }
+  - type: textarea
+    id: repro
+    attributes:
+      label: 最小再現
+      description: "RUNBOOK手順 or コマンドを最小化して記載"
+      placeholder: "steps to reproduce..."
+    validations: { required: true }
+  - type: textarea
+    id: expected
+    attributes: { label: 期待結果（EVALUATION該当行）, render: markdown }
+  - type: textarea
+    id: actual
+    attributes: { label: 実際の結果（ログ貼付）, render: text }
+  - type: checkboxes
+    id: gates
+    attributes:
+      label: 自動ゲート検知
+      options:
+        - label: "canary中止が作動"
+        - label: "リンク検査で失敗"
+        - label: "SLO逸脱を検知"

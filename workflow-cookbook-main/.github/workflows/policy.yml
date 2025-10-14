@@ -1,0 +1,33 @@
+name: policy
+on: [pull_request]
+jobs:
+  forbidden_paths:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Block changes touching forbidden paths
+        env:
+          FORBIDDEN_REGEX: '^core/schema/|^auth/|^governance/'
+          BASE_REF: ${{ github.event.pull_request.base.ref || 'main' }}
+        run: |
+          set -euo pipefail
+          git fetch --depth=50 origin "$BASE_REF"
+          git diff --name-only "origin/$BASE_REF"... | grep -E "$FORBIDDEN_REGEX" && \
+            { echo "::error::Touched forbidden path by policy.yaml"; exit 1; } || true
+
+  require_prioritization_note:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const body = (context.payload.pull_request && context.payload.pull_request.body) || ""
+            if (!/Intent:\s*INT-\d+/i.test(body)) {
+              core.setFailed("PR body must include 'Intent: INT-xxx'")
+            }
+            if (!/EVALUATION/i.test(body)) {
+              core.setFailed("PR must reference EVALUATION (acceptance) anchor")
+            }
+            if (!/Priority\s*Score\s*:\s*\d+(\.\d+)?/i.test(body)) {
+              core.warning("Consider adding 'Priority Score: <number>' based on prioritization.yaml")
+            }

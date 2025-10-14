@@ -1,0 +1,6 @@
+criteria:
+  - { name: impact_scope,     weight: 0.4 }   # 依存の多さ
+  - { name: design_staleness, weight: 0.2 }   # 設計の陳腐化
+  - { name: test_failures,    weight: 0.2 }   # 関連テスト失敗頻度
+  - { name: user_feedback,    weight: 0.2 }   # 要望強度（issues/comments）
+algorithm: weighted_sum

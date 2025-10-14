@@ -1,0 +1,33 @@
+name: Require PR labels
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
+      - unlabeled
+      - edited
+
+jobs:
+  check-labels:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 検証: type:* と semver:* ラベルの付与
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const requiredPrefixes = ["type:", "semver:"];
+            const labels = context.payload.pull_request?.labels?.map((label) => label.name) ?? [];
+            const missing = requiredPrefixes.filter((prefix) => !labels.some((name) => name.startsWith(prefix)));
+
+            if (missing.length === 0) {
+              core.info("必要なラベルがすべて付与されています");
+              return;
+            }
+
+            const message = `このPRには以下のラベルを付与してください: ${missing.join(", ")}`;
+            core.error(message);
+            core.setFailed(message);
+

@@ -1,0 +1,22 @@
+name: Governance Gate
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+jobs:
+  governance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Governance gate
+        env:
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+        run: python tools/ci/check_governance_gate.py
