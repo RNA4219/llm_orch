@@ -56,3 +56,57 @@ def test_load_app_truthy_regression() -> None:
     for value in ("true", "yes"):
         app = load_app(value)
         assert isinstance(app, FastAPI)
+
+
+def test_missing_default_route_returns_400(tmp_path, monkeypatch) -> None:
+    cfg_dir = tmp_path / "cfg"
+    cfg_dir.mkdir()
+    (cfg_dir / "providers.toml").write_text(
+        """
+[primary]
+type = "dummy"
+base_url = ""
+model = "dummy"
+auth_env = ""
+rpm = 60
+concurrency = 1
+""".strip()
+    )
+    (cfg_dir / "router.yaml").write_text(
+        """
+defaults:
+  temperature: 0.1
+  max_tokens: 128
+  task_header: x-orch-task-kind
+routes:
+  something:
+    primary: primary
+    fallback: []
+""".strip()
+    )
+
+    monkeypatch.setenv("ORCH_CONFIG_DIR", str(cfg_dir))
+    app = load_app()
+    module = sys.modules["src.orch.server"]
+
+    class StubMetrics:
+        def __init__(self) -> None:
+            self.records: list[dict[str, object]] = []
+
+        async def write(self, record: dict[str, object]) -> None:
+            self.records.append(record)
+
+    stub = StubMetrics()
+    module.metrics = stub  # type: ignore[assignment]
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"x-orch-task-kind": "missing"},
+        json={"model": "dummy", "messages": [{"role": "user", "content": "hi"}]},
+    )
+
+    assert response.status_code == 400
+    assert "missing" in response.json()["detail"]
+    assert stub.records
+    assert stub.records[0]["ok"] is False
+    assert stub.records[0]["status"] == 400

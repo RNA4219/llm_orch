@@ -1,7 +1,7 @@
 import os
 import asyncio
 import time
-from fastapi import FastAPI, Header, Request
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from .router import load_config, RoutePlanner
 from .metrics import MetricsLogger
@@ -46,9 +46,23 @@ async def healthz():
 @app.post("/v1/chat/completions")
 async def chat_completions(req: Request, body: ChatRequest, x_orch_task_kind: str | None = Header(default=None)):
     task = x_orch_task_kind or cfg.router.defaults.task_header_value or "DEFAULT"
-    route = planner.plan(task)
-    attempt = 0
     start = time.perf_counter()
+    try:
+        route = planner.plan(task)
+    except ValueError as exc:  # no matching route configured
+        await metrics.write({
+            "ts": time.time(),
+            "task": task,
+            "provider": None,
+            "model": None,
+            "latency_ms": int((time.perf_counter() - start) * 1000),
+            "ok": False,
+            "status": 400,
+            "error": str(exc),
+            "retries": 0,
+        })
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    attempt = 0
     last_err: str | None = None
     usage_prompt = 0
     usage_completion = 0
