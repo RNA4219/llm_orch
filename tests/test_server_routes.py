@@ -236,7 +236,8 @@ def test_metrics_write_includes_req_id_on_success(
 
     assert response.status_code == 200
     assert recorded
-    assert all(isinstance(entry.get("req_id"), str) and entry["req_id"] for entry in recorded)
+    assert {entry.get("req_id") for entry in recorded} == {recorded[0]["req_id"]}
+    assert isinstance(recorded[0]["req_id"], str)
 
 
 def test_metrics_write_includes_req_id_on_provider_failure(
@@ -268,7 +269,8 @@ def test_metrics_write_includes_req_id_on_provider_failure(
 
     assert response.status_code == 502
     assert recorded
-    assert all(isinstance(entry.get("req_id"), str) and entry["req_id"] for entry in recorded)
+    assert {entry.get("req_id") for entry in recorded} == {recorded[0]["req_id"]}
+    assert isinstance(recorded[0]["req_id"], str)
 
 
 def test_metrics_write_includes_req_id_on_routing_failure(
@@ -294,4 +296,5 @@ def test_metrics_write_includes_req_id_on_routing_failure(
 
     assert response.status_code == 400
     assert recorded
-    assert all(isinstance(entry.get("req_id"), str) and entry["req_id"] for entry in recorded)
+    assert {entry.get("req_id") for entry in recorded} == {recorded[0]["req_id"]}
+    assert isinstance(recorded[0]["req_id"], str)
