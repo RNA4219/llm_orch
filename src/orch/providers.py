@@ -1,6 +1,9 @@
 import os
+from urllib.parse import urljoin, urlparse
 from typing import Dict, Any, List, Iterable
+
 import httpx
+
 from .router import ProviderDef
 from .types import ProviderChatResponse
 
@@ -15,11 +18,15 @@ class BaseProvider:
 class OpenAICompatProvider(BaseProvider):
     async def chat(self, model: str, messages: List[dict[str, str]], temperature=0.2, max_tokens=2048) -> ProviderChatResponse:
         base = self.defn.base_url.rstrip("/")
-        if "/openai/" in base:
-            url = f"{base}/chat/completions"
+        parsed = urlparse(base)
+        path = parsed.path or ""
+
+        if "/openai/" in path and not path.rstrip("/").endswith("/openai"):
+            base_for_join = base
         else:
-            suffix = "/chat/completions" if base.endswith("/v1") else "/v1/chat/completions"
-            url = f"{base}{suffix}"
+            base_for_join = base if path.endswith("/v1") else f"{base}/v1"
+
+        url = urljoin(f"{base_for_join.rstrip('/')}/", "chat/completions")
         key = os.environ.get(self.defn.auth_env or "", "")
         headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
         payload = {"model": self.defn.model or model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens, "stream": False}
