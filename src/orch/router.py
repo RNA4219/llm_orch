@@ -56,7 +56,14 @@ def load_config(config_dir: str, use_dummy: bool=False) -> LoadedConfig:
     defs = rdata.get("defaults", {})
     routes_cfg = {}
     for k, v in rdata.get("routes", {}).items():
-        routes_cfg[k] = RouteDef(primary=v["primary"], fallback=v.get("fallback", []))
+        fallback_raw = v.get("fallback")
+        if fallback_raw is None:
+            fallback_list: list[str] = []
+        elif isinstance(fallback_raw, list):
+            fallback_list = [str(item) for item in fallback_raw]
+        else:
+            fallback_list = [str(fallback_raw)]
+        routes_cfg[k] = RouteDef(primary=v["primary"], fallback=fallback_list)
     router = RouterConfig(
         defaults=RouterDefaults(
             temperature=float(defs.get("temperature", 0.2)),
@@ -66,6 +73,13 @@ def load_config(config_dir: str, use_dummy: bool=False) -> LoadedConfig:
         ),
         routes=routes_cfg
     )
+    for route_name, route in routes_cfg.items():
+        referenced = [route.primary, *route.fallback]
+        for provider_name in referenced:
+            if provider_name not in providers:
+                raise ValueError(
+                    f"Route '{route_name}' references undefined provider '{provider_name}'"
+                )
     return LoadedConfig(providers=providers, router=router)
 
 class RoutePlanner:
