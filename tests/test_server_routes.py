@@ -47,6 +47,7 @@ defaults:
   temperature: 0.2
   max_tokens: 64
   task_header: "x-orch-task-kind"
+  task_header_value: "PLAN"
 routes:
   PLAN:
     primary: dummy
@@ -69,3 +70,17 @@ def test_chat_missing_route_and_default_returns_400(route_test_config: Path) -> 
     assert response.json()["detail"] == (
         "no route configured for task 'IDEATE' and no DEFAULT route defined in router configuration."
     )
+
+
+def test_chat_missing_header_uses_default_task(route_test_config: Path) -> None:
+    client = TestClient(load_app("1"))
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "dummy",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["choices"][0]["message"]["content"] == "dummy:hi"

@@ -1,5 +1,5 @@
 import os
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Iterable
 import httpx
 from .router import ProviderDef
 from .types import ProviderChatResponse
