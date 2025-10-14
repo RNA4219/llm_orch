@@ -29,8 +29,9 @@ class Guard:
 
   async def __aenter__(self):
     delay = self.bucket.try_take()
-    if delay > 0:
+    while delay > 0:
       await asyncio.sleep(delay)
+      delay = self.bucket.try_take()
     await self.sem.acquire()
     return self
 

@@ -23,6 +23,10 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               number: context.issue.number,
+              headers: {
+                accept: 'application/vnd.github.merge-info-preview+json',
+                'GraphQL-Features': 'pull-request-review-decision',
+              },
             });
             const decision = result.repository.pullRequest?.reviewDecision;
             if (decision !== 'APPROVED') {
