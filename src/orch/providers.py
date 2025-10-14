@@ -1,6 +1,6 @@
 import os
 from urllib.parse import urljoin, urlparse
-from typing import Dict, Any, List, Iterable
+from typing import Dict, Any, List
 
 import httpx
 

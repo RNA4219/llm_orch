@@ -10,8 +10,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.orch.providers import OpenAICompatProvider
-from src.orch.router import ProviderDef
+from src.orch.providers import OpenAICompatProvider  # noqa: E402
+from src.orch.router import ProviderDef  # noqa: E402
 
 
 def run_chat(provider: OpenAICompatProvider, monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
