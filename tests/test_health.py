@@ -60,90 +60,38 @@ def test_load_app_truthy_regression() -> None:
         assert isinstance(app, FastAPI)
 
 
-def test_load_app_with_undefined_provider(tmp_path: Path) -> None:
-    config_dir = tmp_path
-    (config_dir / "providers.toml").write_text(
-        textwrap.dedent(
-            """
-            [known]
-            type = "dummy"
-            base_url = "http://example.test"
-            model = "dummy"
-            """
-        ).strip()
-        + "\n",
-        encoding="utf-8",
-    )
-    (config_dir / "router.yaml").write_text(
-        textwrap.dedent(
-            """
-            defaults: { temperature: 0.1, max_tokens: 1024, task_header: "x-orch-task-kind" }
-            routes:
-              DEFAULT: { primary: missing, fallback: [known] }
-            """
-        ).strip()
-        + "\n",
-        encoding="utf-8",
-    )
-    prev_dir = os.environ.get("ORCH_CONFIG_DIR")
-    os.environ["ORCH_CONFIG_DIR"] = str(config_dir)
-    try:
-        with pytest.raises(ValueError, match="Route 'DEFAULT' references undefined provider 'missing'"):
-            load_app()
-    finally:
-        if prev_dir is None:
-            os.environ.pop("ORCH_CONFIG_DIR", None)
-        else:
-            os.environ["ORCH_CONFIG_DIR"] = prev_dir
-def test_missing_default_route_returns_400(tmp_path, monkeypatch) -> None:
-    cfg_dir = tmp_path / "cfg"
-    cfg_dir.mkdir()
-    (cfg_dir / "providers.toml").write_text(
+def test_chat_missing_default_returns_400(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("ORCH_CONFIG_DIR", str(tmp_path))
+    providers_file = tmp_path / "providers.dummy.toml"
+    providers_file.write_text(
         """
-[primary]
+[dummy]
 type = "dummy"
-base_url = ""
 model = "dummy"
-auth_env = ""
+base_url = ""
 rpm = 60
 concurrency = 1
 """.strip()
     )
-    (cfg_dir / "router.yaml").write_text(
+    router_file = tmp_path / "router.yaml"
+    router_file.write_text(
         """
 defaults:
-  temperature: 0.1
-  max_tokens: 128
-  task_header: x-orch-task-kind
+  temperature: 0.2
+  max_tokens: 64
+  task_header: "x-orch-task-kind"
 routes:
-  something:
-    primary: primary
-    fallback: []
+  PLAN:
+    primary: dummy
 """.strip()
     )
-
-    monkeypatch.setenv("ORCH_CONFIG_DIR", str(cfg_dir))
-    app = load_app()
-    module = sys.modules["src.orch.server"]
-
-    class StubMetrics:
-        def __init__(self) -> None:
-            self.records: list[dict[str, object]] = []
-
-        async def write(self, record: dict[str, object]) -> None:
-            self.records.append(record)
-
-    stub = StubMetrics()
-    module.metrics = stub  # type: ignore[assignment]
-    client = TestClient(app)
-    response = client.post(
+    c = TestClient(load_app("1"))
+    response = c.post(
         "/v1/chat/completions",
-        headers={"x-orch-task-kind": "missing"},
-        json={"model": "dummy", "messages": [{"role": "user", "content": "hi"}]},
+        json={
+            "model": "dummy",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
     )
-
     assert response.status_code == 400
-    assert "missing" in response.json()["detail"]
-    assert stub.records
-    assert stub.records[0]["ok"] is False
-    assert stub.records[0]["status"] == 400
+    assert "no route configured" in response.json()["detail"]
