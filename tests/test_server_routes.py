@@ -5,7 +5,7 @@ import os
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from fastapi import FastAPI
@@ -59,6 +59,27 @@ routes:
 """.strip()
     )
     return tmp_path
+
+
+def capture_metric_records(
+    server_module: Any, monkeypatch: pytest.MonkeyPatch
+) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+
+    async def capture(record: dict[str, object]) -> None:
+        records.append(record)
+
+    monkeypatch.setattr(server_module.metrics, "write", capture)
+    return records
+
+
+def assert_single_req_id(records: list[dict[str, object]]) -> None:
+    assert records
+    req_ids = {record.get("req_id") for record in records}
+    assert len(req_ids) == 1
+    req_id = req_ids.pop()
+    assert isinstance(req_id, str)
+    assert req_id
 
 
 def test_chat_missing_route_and_default_returns_400(route_test_config: Path) -> None:
@@ -214,18 +235,13 @@ routes:
     )
 
 
-def test_metrics_write_includes_req_id_on_success(
+def test_chat_metrics_success_includes_req_id(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    client = TestClient(load_app("1"))
+    app = load_app("1")
     server_module = sys.modules["src.orch.server"]
-    recorded: list[dict[str, object]] = []
-
-    async def fake_write(record: dict[str, object]) -> None:
-        recorded.append(record)
-
-    monkeypatch.setattr(server_module.metrics, "write", fake_write)
-
+    records = capture_metric_records(server_module, monkeypatch)
+    client = TestClient(app)
     response = client.post(
         "/v1/chat/completions",
         json={
@@ -235,56 +251,16 @@ def test_metrics_write_includes_req_id_on_success(
     )
 
     assert response.status_code == 200
-    assert recorded
-    assert {entry.get("req_id") for entry in recorded} == {recorded[0]["req_id"]}
-    assert isinstance(recorded[0]["req_id"], str)
+    assert_single_req_id(records)
 
 
-def test_metrics_write_includes_req_id_on_provider_failure(
+def test_chat_metrics_routing_error_includes_req_id(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    client = TestClient(load_app("1"))
+    app = load_app("1")
     server_module = sys.modules["src.orch.server"]
-    recorded: list[dict[str, object]] = []
-
-    async def fake_write(record: dict[str, object]) -> None:
-        recorded.append(record)
-
-    monkeypatch.setattr(server_module.metrics, "write", fake_write)
-
-    from src.orch.providers import DummyProvider
-
-    async def failing_chat(*args: object, **kwargs: object) -> object:
-        raise RuntimeError("boom")
-
-    monkeypatch.setattr(DummyProvider, "chat", failing_chat)
-
-    response = client.post(
-        "/v1/chat/completions",
-        json={
-            "model": "dummy",
-            "messages": [{"role": "user", "content": "hi"}],
-        },
-    )
-
-    assert response.status_code == 502
-    assert recorded
-    assert {entry.get("req_id") for entry in recorded} == {recorded[0]["req_id"]}
-    assert isinstance(recorded[0]["req_id"], str)
-
-
-def test_metrics_write_includes_req_id_on_routing_failure(
-    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    client = TestClient(load_app("1"))
-    server_module = sys.modules["src.orch.server"]
-    recorded: list[dict[str, object]] = []
-
-    async def fake_write(record: dict[str, object]) -> None:
-        recorded.append(record)
-
-    monkeypatch.setattr(server_module.metrics, "write", fake_write)
-
+    records = capture_metric_records(server_module, monkeypatch)
+    client = TestClient(app)
     response = client.post(
         "/v1/chat/completions",
         headers={"x-orch-task-kind": "UNKNOWN"},
@@ -295,6 +271,35 @@ def test_metrics_write_includes_req_id_on_routing_failure(
     )
 
     assert response.status_code == 400
-    assert recorded
-    assert {entry.get("req_id") for entry in recorded} == {recorded[0]["req_id"]}
-    assert isinstance(recorded[0]["req_id"], str)
+    assert_single_req_id(records)
+
+
+def test_chat_metrics_provider_error_includes_req_id(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+    records = capture_metric_records(server_module, monkeypatch)
+    async def no_sleep(_: float) -> None:
+        return None
+
+    class BoomProvider:
+        model = "dummy"
+
+        async def chat(self, *args: object, **kwargs: object) -> object:
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(server_module.asyncio, "sleep", no_sleep)
+    monkeypatch.setitem(server_module.providers.providers, "dummy", BoomProvider())
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "dummy",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+
+    assert response.status_code == 502
+    assert_single_req_id(records)
