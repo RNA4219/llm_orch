@@ -28,8 +28,10 @@ class Guard:
     self.sem = asyncio.Semaphore(concurrency)
 
   async def __aenter__(self):
-    delay = self.bucket.try_take()
-    if delay > 0:
+    while True:
+      delay = self.bucket.try_take()
+      if delay <= 0:
+        break
       await asyncio.sleep(delay)
     await self.sem.acquire()
     return self
