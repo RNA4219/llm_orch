@@ -24,6 +24,27 @@ providers: ProviderRegistry
 guards: ProviderGuards
 planner: RoutePlanner
 metrics: MetricsLogger
+CONFIG_DIR = os.environ.get("ORCH_CONFIG_DIR", os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "config"))
+
+TRUTHY_VALUES = {"1", "true", "yes", "on"}
+FALSY_VALUES = {"0", "false", "no", "off"}
+
+
+def _env_var_as_bool(name: str, *, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().lower()
+    if not normalized:
+        return default
+    if normalized in TRUTHY_VALUES:
+        return True
+    if normalized in FALSY_VALUES:
+        return False
+    return default
+
+
+USE_DUMMY = _env_var_as_bool("ORCH_USE_DUMMY")
 
 
 def init_dependencies(*, use_dummy: bool) -> None:
@@ -56,6 +77,7 @@ async def chat_completions(req: Request, body: ChatRequest, x_orch_task_kind: st
     last_err: str | None = None
     usage_prompt = 0
     usage_completion = 0
+    normalized_messages = [{"role": m.role, "content": m.content} for m in body.messages]
 
     payload_messages = [message.model_dump() for message in body.messages]
 
@@ -71,6 +93,7 @@ async def chat_completions(req: Request, body: ChatRequest, x_orch_task_kind: st
                     temperature=body.temperature,
                     max_tokens=body.max_tokens,
                 )
+                resp = await prov.chat(body.model, normalized_messages, temperature=body.temperature, max_tokens=body.max_tokens)
                 latency = int((time.perf_counter() - start) * 1000)
                 usage_prompt = resp.usage_prompt_tokens or 0
                 usage_completion = resp.usage_completion_tokens or 0
