@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import anyio
 import httpx
 import pytest
 
@@ -14,13 +15,7 @@ from src.orch.providers import AnthropicProvider
 from src.orch.router import ProviderDef
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return "asyncio"
-
-
-@pytest.mark.anyio("asyncio")
-async def test_anthropic_chat_formats_messages(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_anthropic_chat_formats_messages(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, Any] = {}
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -57,23 +52,60 @@ async def test_anthropic_chat_formats_messages(monkeypatch: pytest.MonkeyPatch) 
     )
 
     messages = [
-        {"role": "system", "content": "Be precise."},
-        {"role": "user", "content": "Hello"},
-        {"role": "assistant", "content": "Hi"},
+        {
+            "role": "system",
+            "content": [
+                {"type": "text", "text": "Be precise."},
+                {"type": "text", "text": "Stay calm."},
+            ],
+        },
+        {"role": "system", "content": "Respond in Japanese."},
+        {
+            "role": "user",
+            "content": [
+                "Hello",
+                {"type": "text", "text": "there"},
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Hi!"}],
+        },
+        {
+            "role": "tool",
+            "content": "Ignored",
+        },
         {"role": "user", "content": "How are you?"},
     ]
 
-    response = await provider.chat(model="claude-3", messages=messages, temperature=0.3, max_tokens=256)
+    async def invoke() -> Any:
+        return await provider.chat(
+            model="claude-3",
+            messages=messages,
+            temperature=0.3,
+            max_tokens=256,
+        )
+
+    response = anyio.run(invoke)
 
     payload = captured["json"]
 
     assert payload["model"] == "claude-3"
-    assert payload["system"] == "Be precise."
+    assert (
+        payload["system"]
+        == "Be precise.\n\nStay calm.\n\nRespond in Japanese."
+    )
     assert payload["temperature"] == 0.3
     assert payload["max_tokens"] == 256
     assert payload["messages"] == [
-        {"role": "user", "content": [{"type": "text", "text": "Hello"}]},
-        {"role": "assistant", "content": [{"type": "text", "text": "Hi"}]},
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Hello"},
+                {"type": "text", "text": "there"},
+            ],
+        },
+        {"role": "assistant", "content": [{"type": "text", "text": "Hi!"}]},
         {"role": "user", "content": [{"type": "text", "text": "How are you?"}]},
     ]
 
