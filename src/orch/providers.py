@@ -51,6 +51,11 @@ class AnthropicProvider(BaseProvider):
                 return blocks or [{"type": "text", "text": ""}]
             return [{"type": "text", "text": str(content)}]
 
+        def flatten_to_text(content: Any) -> str:
+            blocks = to_text_blocks(content)
+            texts = [block.get("text", "") for block in blocks if block.get("text")]
+            return "\n\n".join(texts)
+
         system_segments = [m["content"] for m in messages if m.get("role") == "system"]
         mapped: List[Dict[str, Any]] = []
         for msg in messages:
@@ -66,7 +71,8 @@ class AnthropicProvider(BaseProvider):
             "messages": mapped,
         }
         if system_segments:
-            payload["system"] = "\n\n".join(str(seg) for seg in system_segments)
+            flattened = [flatten_to_text(seg) for seg in system_segments]
+            payload["system"] = "\n\n".join(filter(None, flattened))
         async with httpx.AsyncClient(timeout=60) as client:
             r = await client.post(url, headers=headers, json=payload)
             r.raise_for_status()

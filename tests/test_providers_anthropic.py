@@ -57,9 +57,29 @@ async def test_anthropic_chat_formats_messages(monkeypatch: pytest.MonkeyPatch) 
     )
 
     messages = [
-        {"role": "system", "content": "Be precise."},
-        {"role": "user", "content": "Hello"},
-        {"role": "assistant", "content": "Hi"},
+        {
+            "role": "system",
+            "content": [
+                {"type": "text", "text": "Be precise."},
+                {"type": "text", "text": "Stay calm."},
+            ],
+        },
+        {"role": "system", "content": "Respond in Japanese."},
+        {
+            "role": "user",
+            "content": [
+                "Hello",
+                {"type": "text", "text": "there"},
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Hi!"}],
+        },
+        {
+            "role": "tool",
+            "content": "Ignored",
+        },
         {"role": "user", "content": "How are you?"},
     ]
 
@@ -68,12 +88,21 @@ async def test_anthropic_chat_formats_messages(monkeypatch: pytest.MonkeyPatch) 
     payload = captured["json"]
 
     assert payload["model"] == "claude-3"
-    assert payload["system"] == "Be precise."
+    assert (
+        payload["system"]
+        == "Be precise.\n\nStay calm.\n\nRespond in Japanese."
+    )
     assert payload["temperature"] == 0.3
     assert payload["max_tokens"] == 256
     assert payload["messages"] == [
-        {"role": "user", "content": [{"type": "text", "text": "Hello"}]},
-        {"role": "assistant", "content": [{"type": "text", "text": "Hi"}]},
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Hello"},
+                {"type": "text", "text": "there"},
+            ],
+        },
+        {"role": "assistant", "content": [{"type": "text", "text": "Hi!"}]},
         {"role": "user", "content": [{"type": "text", "text": "How are you?"}]},
     ]
 
