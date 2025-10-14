@@ -20,11 +20,14 @@ class OpenAICompatProvider(BaseProvider):
         base = self.defn.base_url.rstrip("/")
         parsed = urlparse(base)
         path = parsed.path or ""
+        normalized_path = path.rstrip("/")
 
-        if "/openai/" in path and not path.rstrip("/").endswith("/openai"):
+        if "/openai/" in path and not normalized_path.endswith("/openai"):
+            base_for_join = base
+        elif normalized_path.endswith("/v1"):
             base_for_join = base
         else:
-            base_for_join = base if path.endswith("/v1") else f"{base}/v1"
+            base_for_join = f"{base}/v1"
 
         url = urljoin(f"{base_for_join.rstrip('/')}/", "chat/completions")
         key = os.environ.get(self.defn.auth_env or "", "")
