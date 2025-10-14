@@ -70,6 +70,8 @@ async def chat_completions(req: Request, body: ChatRequest):
             "ok": False,
             "status": 400,
             "error": detail,
+            "usage_prompt": 0,
+            "usage_completion": 0,
             "retries": 0,
         })
         raise HTTPException(status_code=400, detail=detail)
@@ -115,6 +117,8 @@ async def chat_completions(req: Request, body: ChatRequest):
                     "ok": False,
                     "status": 0,
                     "error": last_err,
+                    "usage_prompt": 0,
+                    "usage_completion": 0,
                     "retries": attempt - 1,
                 })
                 await asyncio.sleep(min(0.25 * attempt, 2.0))  # simple backoff
