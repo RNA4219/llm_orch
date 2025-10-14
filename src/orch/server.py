@@ -13,8 +13,8 @@ app = FastAPI(title="llm-orch")
 
 CONFIG_DIR = os.environ.get("ORCH_CONFIG_DIR", os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "config"))
 
-TRUTHY_VALUES = {"1", "true", "yes", "on"}
-FALSY_VALUES = {"0", "false", "no", "off"}
+TRUTHY_VALUES: frozenset[str] = frozenset({"1", "true", "yes", "on"})
+FALSY_VALUES: frozenset[str] = frozenset({"0", "false", "no", "off"})
 
 
 def _env_var_as_bool(name: str, *, default: bool = False) -> bool:
@@ -31,7 +31,7 @@ def _env_var_as_bool(name: str, *, default: bool = False) -> bool:
     return default
 
 
-USE_DUMMY = _env_var_as_bool("ORCH_USE_DUMMY")
+USE_DUMMY: bool = _env_var_as_bool("ORCH_USE_DUMMY")
 
 cfg = load_config(CONFIG_DIR, use_dummy=USE_DUMMY)
 providers = ProviderRegistry(cfg.providers)
