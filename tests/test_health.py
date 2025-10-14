@@ -56,3 +56,40 @@ def test_load_app_truthy_regression() -> None:
     for value in ("true", "yes"):
         app = load_app(value)
         assert isinstance(app, FastAPI)
+
+
+def test_chat_missing_default_returns_400(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("ORCH_CONFIG_DIR", str(tmp_path))
+    providers_file = tmp_path / "providers.dummy.toml"
+    providers_file.write_text(
+        """
+[dummy]
+type = "dummy"
+model = "dummy"
+base_url = ""
+rpm = 60
+concurrency = 1
+""".strip()
+    )
+    router_file = tmp_path / "router.yaml"
+    router_file.write_text(
+        """
+defaults:
+  temperature: 0.2
+  max_tokens: 64
+  task_header: "x-orch-task-kind"
+routes:
+  PLAN:
+    primary: dummy
+""".strip()
+    )
+    c = TestClient(load_app("1"))
+    response = c.post(
+        "/v1/chat/completions",
+        json={
+            "model": "dummy",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+    assert response.status_code == 400
+    assert "no route configured" in response.json()["detail"]

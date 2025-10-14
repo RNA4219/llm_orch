@@ -1,13 +1,15 @@
-import os
 import asyncio
+import os
 import time
-from fastapi import FastAPI, Header, Request
+
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
-from .router import load_config, RoutePlanner
+
 from .metrics import MetricsLogger
-from .rate_limiter import ProviderGuards
-from .types import ChatRequest, chat_response_from_provider
 from .providers import ProviderRegistry
+from .rate_limiter import ProviderGuards
+from .router import RoutePlanner, load_config
+from .types import ChatRequest, chat_response_from_provider
 
 app = FastAPI(title="llm-orch")
 
@@ -46,9 +48,24 @@ async def healthz():
 @app.post("/v1/chat/completions")
 async def chat_completions(req: Request, body: ChatRequest, x_orch_task_kind: str | None = Header(default=None)):
     task = x_orch_task_kind or cfg.router.defaults.task_header_value or "DEFAULT"
-    route = planner.plan(task)
-    attempt = 0
     start = time.perf_counter()
+    try:
+        route = planner.plan(task)
+    except ValueError as exc:
+        detail = str(exc)
+        await metrics.write({
+            "ts": time.time(),
+            "task": task,
+            "provider": "unroutable",
+            "model": body.model,
+            "latency_ms": int((time.perf_counter() - start) * 1000),
+            "ok": False,
+            "status": 400,
+            "error": detail,
+            "retries": 0,
+        })
+        raise HTTPException(status_code=400, detail=detail)
+    attempt = 0
     last_err: str | None = None
     usage_prompt = 0
     usage_completion = 0
