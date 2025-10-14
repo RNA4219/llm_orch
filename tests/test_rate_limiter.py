@@ -17,7 +17,10 @@ def anyio_backend() -> str:
 
 
 @pytest.mark.anyio
-async def test_guard_respects_rpm_after_wait(monkeypatch, anyio_backend: str):
+async def test_guard_does_not_exceed_single_rpm(
+  monkeypatch: pytest.MonkeyPatch, anyio_backend: str
+) -> None:
+  _ = anyio_backend
   fake_time = 0.0
   sleeps: list[float] = []
 
@@ -32,20 +35,17 @@ async def test_guard_respects_rpm_after_wait(monkeypatch, anyio_backend: str):
   monkeypatch.setattr(rate_limiter.time, "time", fake_time_func)
   monkeypatch.setattr(rate_limiter.asyncio, "sleep", fake_sleep)
 
-  guard = Guard(rpm=2, concurrency=1)
+  guard = Guard(rpm=1, concurrency=1)
 
   async def acquire_once() -> None:
     async with guard:
       pass
 
   await acquire_once()
-  await acquire_once()
-  await acquire_once()
-  assert sleeps == [60.0]
-
-  sleeps.clear()
-  await acquire_once()
   assert sleeps == []
 
   await acquire_once()
   assert sleeps == [60.0]
+
+  await acquire_once()
+  assert sleeps == [60.0, 60.0]
