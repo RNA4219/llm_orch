@@ -47,8 +47,11 @@ async def healthz():
 
 @app.post("/v1/chat/completions")
 async def chat_completions(req: Request, body: ChatRequest):
-    header_name = cfg.router.defaults.task_header
-    header_value = req.headers.get(header_name) if header_name else None
+    header_value = (
+        req.headers.get(cfg.router.defaults.task_header)
+        if cfg.router.defaults.task_header
+        else None
+    )
     task = header_value or cfg.router.defaults.task_header_value or "DEFAULT"
     start = time.perf_counter()
     try:

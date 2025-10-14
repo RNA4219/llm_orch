@@ -169,3 +169,46 @@ routes:
     )
     assert response_custom.status_code == 200
     assert recorded_tasks == ["CUSTOM"]
+
+
+def test_chat_custom_task_header_rejects_default_header_name(
+    route_test_config: Path,
+) -> None:
+    router_file = route_test_config / "router.yaml"
+    router_file.write_text(
+        """
+defaults:
+  temperature: 0.2
+  max_tokens: 64
+  task_header: "x-orch-alt-task"
+  task_header_value: ""
+routes:
+  CUSTOM:
+    primary: dummy
+""".strip()
+    )
+
+    client = TestClient(load_app("1"))
+
+    success = client.post(
+        "/v1/chat/completions",
+        headers={"x-orch-alt-task": "CUSTOM"},
+        json={
+            "model": "dummy",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+    assert success.status_code == 200
+
+    failure = client.post(
+        "/v1/chat/completions",
+        headers={"x-orch-task-kind": "CUSTOM"},
+        json={
+            "model": "dummy",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+    assert failure.status_code == 400
+    assert failure.json()["detail"] == (
+        "no route configured for task 'DEFAULT' and no DEFAULT route defined in router configuration."
+    )
