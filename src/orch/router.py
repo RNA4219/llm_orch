@@ -74,4 +74,9 @@ class RoutePlanner:
         self.providers = providers
 
     def plan(self, task: str) -> RouteDef:
-        return self.cfg.routes.get(task, self.cfg.routes.get("DEFAULT"))
+        if task in self.cfg.routes:
+            return self.cfg.routes[task]
+        default_route = self.cfg.routes.get("DEFAULT")
+        if default_route is not None:
+            return default_route
+        raise ValueError(f"route not found for task '{task}' and no DEFAULT route configured")
