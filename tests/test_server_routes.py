@@ -3,11 +3,16 @@ from __future__ import annotations
 import importlib
 import os
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
+if TYPE_CHECKING:
+    from src.orch.router import RouteDef, RoutePlanner
 
 
 def load_app(dummy_env: str | None = None) -> FastAPI:
@@ -84,3 +89,28 @@ def test_chat_missing_header_uses_default_task(route_test_config: Path) -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["choices"][0]["message"]["content"] == "dummy:hi"
+
+
+def test_chat_missing_header_routes_to_task_header_default(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = TestClient(load_app("1"))
+    from src.orch.router import RouteDef as RouterRouteDef, RoutePlanner as RouterRoutePlanner
+
+    recorded_tasks: list[str] = []
+    original_plan: Callable[[RouterRoutePlanner, str], RouterRouteDef] = RouterRoutePlanner.plan
+
+    def recording_plan(self: RouterRoutePlanner, task: str) -> RouterRouteDef:
+        recorded_tasks.append(task)
+        return original_plan(self, task)
+
+    monkeypatch.setattr(RouterRoutePlanner, "plan", recording_plan)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "dummy",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+    assert response.status_code == 200
+    assert recorded_tasks == ["PLAN"]
