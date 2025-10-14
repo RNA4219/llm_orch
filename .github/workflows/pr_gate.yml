@@ -23,6 +23,9 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               number: context.issue.number,
+              headers: {
+                accept: 'application/vnd.github.merge-info-preview+json',
+              },
             });
             const decision = result.repository.pullRequest?.reviewDecision;
             if (decision !== 'APPROVED') {
