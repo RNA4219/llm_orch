@@ -104,8 +104,6 @@ class RoutePlanner:
         default_route = self.cfg.routes.get("DEFAULT")
         if default_route is not None:
             return default_route
-        available = ", ".join(sorted(self.cfg.routes.keys())) or "<none>"
         raise ValueError(
-            "no route configured for task "
-            f"'{task}' and no DEFAULT route; available routes: {available}"
+            f"no route configured for task '{task}' and no DEFAULT route defined in router configuration."
         )
