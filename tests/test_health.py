@@ -1,8 +1,10 @@
 import importlib
 import os
 import sys
+import textwrap
 from pathlib import Path
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -58,6 +60,41 @@ def test_load_app_truthy_regression() -> None:
         assert isinstance(app, FastAPI)
 
 
+def test_load_app_with_undefined_provider(tmp_path: Path) -> None:
+    config_dir = tmp_path
+    (config_dir / "providers.toml").write_text(
+        textwrap.dedent(
+            """
+            [known]
+            type = "dummy"
+            base_url = "http://example.test"
+            model = "dummy"
+            """
+        ).strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    (config_dir / "router.yaml").write_text(
+        textwrap.dedent(
+            """
+            defaults: { temperature: 0.1, max_tokens: 1024, task_header: "x-orch-task-kind" }
+            routes:
+              DEFAULT: { primary: missing, fallback: [known] }
+            """
+        ).strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    prev_dir = os.environ.get("ORCH_CONFIG_DIR")
+    os.environ["ORCH_CONFIG_DIR"] = str(config_dir)
+    try:
+        with pytest.raises(ValueError, match="Route 'DEFAULT' references undefined provider 'missing'"):
+            load_app()
+    finally:
+        if prev_dir is None:
+            os.environ.pop("ORCH_CONFIG_DIR", None)
+        else:
+            os.environ["ORCH_CONFIG_DIR"] = prev_dir
 def test_missing_default_route_returns_400(tmp_path, monkeypatch) -> None:
     cfg_dir = tmp_path / "cfg"
     cfg_dir.mkdir()
