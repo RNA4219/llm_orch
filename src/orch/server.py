@@ -1,6 +1,7 @@
 import asyncio
 import os
 import time
+import uuid
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -54,11 +55,13 @@ async def chat_completions(req: Request, body: ChatRequest):
     )
     task = header_value or cfg.router.defaults.task_header_value or "DEFAULT"
     start = time.perf_counter()
+    req_id = uuid.uuid4().hex
     try:
         route = planner.plan(task)
     except ValueError as exc:
         detail = str(exc) or "routing unavailable"
         await metrics.write({
+            "req_id": req_id,
             "ts": time.time(),
             "task": task,
             "provider": "unroutable",
@@ -87,6 +90,7 @@ async def chat_completions(req: Request, body: ChatRequest):
                 usage_prompt = resp.usage_prompt_tokens or 0
                 usage_completion = resp.usage_completion_tokens or 0
                 await metrics.write({
+                    "req_id": req_id,
                     "ts": time.time(),
                     "task": task,
                     "provider": provider_name,
@@ -102,6 +106,7 @@ async def chat_completions(req: Request, body: ChatRequest):
             except Exception as e:
                 last_err = str(e)
                 await metrics.write({
+                    "req_id": req_id,
                     "ts": time.time(),
                     "task": task,
                     "provider": provider_name,
