@@ -52,7 +52,7 @@ async def chat_completions(req: Request, body: ChatRequest, x_orch_task_kind: st
     try:
         route = planner.plan(task)
     except ValueError as exc:
-        detail = str(exc)
+        detail = str(exc) or "routing unavailable"
         await metrics.write({
             "ts": time.time(),
             "task": task,
