@@ -1,0 +1,8 @@
+defaults: { temperature: 0.2, max_tokens: 2048, task_header: "x-orch-task-kind" }
+routes:
+  PLAN:      { primary: frontier_primary,  fallback: [frontier_backup] }
+  CRITIQUE:  { primary: frontier_primary,  fallback: [frontier_backup] }
+  CODE:      { primary: hosted_fast,       fallback: [local_7b, frontier_primary] }
+  SUMMARY:   { primary: hosted_fast,       fallback: [local_7b] }
+  BULK:      { primary: local_7b,          fallback: [hosted_fast] }
+  DEFAULT:   { primary: hosted_fast,       fallback: [frontier_primary, local_7b] }

@@ -1,0 +1,31 @@
+# Sample providers (edit as needed)
+[frontier_primary]
+type = "openai"
+base_url = "https://api.openai.com/v1"
+model = "gpt-4.1-mini"
+auth_env = "OPENAI_API_KEY"
+rpm = 120
+concurrency = 8
+
+[frontier_backup]
+type = "anthropic"
+base_url = "https://api.anthropic.com"
+model = "claude-3-5-sonnet-20241022"
+auth_env = "ANTHROPIC_API_KEY"
+rpm = 60
+concurrency = 6
+
+[hosted_fast]
+type = "openai" # GroqはOpenAI互換エンドポイントで利用可
+base_url = "https://api.groq.com/openai/v1"
+model = "llama-3.1-8b-instruct"
+auth_env = "GROQ_API_KEY"
+rpm = 120
+concurrency = 16
+
+[local_7b]
+type = "ollama"
+base_url = "http://127.0.0.1:11434"
+model = "qwen2.5:7b-instruct-q4_K_M"
+rpm = 9999
+concurrency = 4

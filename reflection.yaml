@@ -1,0 +1,18 @@
+targets:
+  - name: unit
+    logs: ["logs/test.jsonl"]
+metrics:
+  - pass_rate
+  - duration_p95
+  - flaky_rate
+analysis:
+  engine: "heuristic"
+  llm_model: "gpt-4.1-mini"
+  max_tokens: 0
+actions:
+  suggest_issues: true
+  open_pr_as_draft: true
+  auto_fix: false
+report:
+  output: "reports/today.md"
+  include_why_why: true

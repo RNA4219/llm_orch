@@ -1,0 +1,49 @@
+name: reflection
+on:
+  workflow_run:
+    workflows: ["test"]
+    types: [completed]
+  schedule:
+    - cron: "0 3 * * *"   # 毎日3:00 UTC
+jobs:
+  reflect:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: test-logs
+          path: logs
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Analyze logs → report
+        run: |
+          python -m pip install --upgrade pip
+          python scripts/analyze.py
+      - name: Commit report
+        run: |
+          git config user.name "reflect-bot"
+          git config user.email "bot@example.com"
+          git add reports/today.md
+          git commit -m "chore(report): reflection report [skip ci]" || echo "no changes"
+          git push || true
+      - name: Open issue if needed (draft memo)
+        if: ${{ hashFiles('reports/issue_suggestions.md') != '' }}
+        uses: peter-evans/create-issue-from-file@v5
+        with:
+          title: "反省TODO ${{ github.run_id }}"
+          content-filepath: reports/issue_suggestions.md
+          labels: reflection, needs-triage
+      - name: Open draft PR with doc/test tweaks (disabled)
+        if: ${{ false }}  # デチューン：無効化
+        uses: peter-evans/create-pull-request@v6
+        with:
+          title: "Reflection suggestions (draft)"
+          draft: true
+          labels: reflection

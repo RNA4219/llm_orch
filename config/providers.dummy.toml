@@ -1,0 +1,28 @@
+# Dummy-only providers for offline/local testing
+[hosted_fast]
+type = "dummy"
+base_url = ""
+model = "dummy"
+rpm = 1000
+concurrency = 64
+
+[frontier_primary]
+type = "dummy"
+base_url = ""
+model = "dummy"
+rpm = 1000
+concurrency = 64
+
+[frontier_backup]
+type = "dummy"
+base_url = ""
+model = "dummy"
+rpm = 1000
+concurrency = 64
+
+[local_7b]
+type = "dummy"
+base_url = ""
+model = "dummy"
+rpm = 1000
+concurrency = 64
