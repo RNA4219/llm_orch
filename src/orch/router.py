@@ -71,7 +71,11 @@ def load_config(config_dir: str, use_dummy: bool=False) -> LoadedConfig:
             temperature=float(defs.get("temperature", 0.2)),
             max_tokens=int(defs.get("max_tokens", 2048)),
             task_header=str(defs.get("task_header", "x-orch-task-kind")),
-            task_header_value=str(task_header_value) if task_header_value is not None else None
+            task_header_value=(
+                str(defs["task_header_value"])
+                if defs.get("task_header_value") is not None
+                else None
+            ),
         ),
         routes=routes_cfg
     )
