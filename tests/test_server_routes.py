@@ -114,3 +114,58 @@ def test_chat_missing_header_routes_to_task_header_default(
     )
     assert response.status_code == 200
     assert recorded_tasks == ["PLAN"]
+
+
+def test_chat_custom_task_header_routes_only_with_configured_header(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    router_file = route_test_config / "router.yaml"
+    router_file.write_text(
+        """
+defaults:
+  temperature: 0.2
+  max_tokens: 64
+  task_header: "x-orch-custom-task"
+  task_header_value: "PLAN"
+routes:
+  PLAN:
+    primary: dummy
+  CUSTOM:
+    primary: dummy
+""".strip()
+    )
+
+    client = TestClient(load_app("1"))
+    from src.orch.router import RouteDef as RouterRouteDef, RoutePlanner as RouterRoutePlanner
+
+    recorded_tasks: list[str] = []
+    original_plan: Callable[[RouterRoutePlanner, str], RouterRouteDef] = RouterRoutePlanner.plan
+
+    def recording_plan(self: RouterRoutePlanner, task: str) -> RouterRouteDef:
+        recorded_tasks.append(task)
+        return original_plan(self, task)
+
+    monkeypatch.setattr(RouterRoutePlanner, "plan", recording_plan)
+
+    response_default = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "dummy",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+    assert response_default.status_code == 200
+    assert recorded_tasks == ["PLAN"]
+
+    recorded_tasks.clear()
+
+    response_custom = client.post(
+        "/v1/chat/completions",
+        headers={"x-orch-custom-task": "CUSTOM"},
+        json={
+            "model": "dummy",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+    assert response_custom.status_code == 200
+    assert recorded_tasks == ["CUSTOM"]
