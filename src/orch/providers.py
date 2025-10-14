@@ -1,5 +1,5 @@
 import os
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Iterable
 import httpx
 from .router import ProviderDef
 from .types import ProviderChatResponse
@@ -34,9 +34,39 @@ class AnthropicProvider(BaseProvider):
         url = f"{self.defn.base_url.rstrip('/')}/v1/messages"
         key = os.environ.get(self.defn.auth_env or "", "")
         headers = {"x-api-key": key, "anthropic-version": "2023-06-01", "Content-Type": "application/json"}
-        # map OpenAI-style messages to Anthropic
-        mapped = [{"role": m["role"], "content": m["content"]} for m in messages if m["role"] in ("user","assistant","system")]
-        payload = {"model": self.defn.model or model, "max_tokens": max_tokens, "temperature": temperature, "messages": mapped}
+
+        def to_text_blocks(content: Any) -> List[Dict[str, str]]:
+            if isinstance(content, str):
+                return [{"type": "text", "text": content}]
+            if isinstance(content, Iterable) and not isinstance(content, dict):
+                blocks: List[Dict[str, str]] = []
+                for item in content:
+                    if isinstance(item, dict):
+                        text_val = item.get("text")
+                        if text_val is None:
+                            continue
+                        blocks.append({"type": item.get("type", "text"), "text": str(text_val)})
+                    else:
+                        blocks.append({"type": "text", "text": str(item)})
+                return blocks or [{"type": "text", "text": ""}]
+            return [{"type": "text", "text": str(content)}]
+
+        system_segments = [m["content"] for m in messages if m.get("role") == "system"]
+        mapped: List[Dict[str, Any]] = []
+        for msg in messages:
+            role = msg.get("role")
+            if role not in ("user", "assistant"):
+                continue
+            mapped.append({"role": role, "content": to_text_blocks(msg.get("content", ""))})
+
+        payload: Dict[str, Any] = {
+            "model": self.defn.model or model,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "messages": mapped,
+        }
+        if system_segments:
+            payload["system"] = "\n\n".join(str(seg) for seg in system_segments)
         async with httpx.AsyncClient(timeout=60) as client:
             r = await client.post(url, headers=headers, json=payload)
             r.raise_for_status()
