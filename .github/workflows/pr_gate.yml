@@ -7,8 +7,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check CODEOWNERS approval
-        uses: mheap/github-action-required-reviewers@v2
-        with: { reviewers: 'CODEOWNERS', failOnMissing: true }
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const query = `
+              query($owner: String!, $repo: String!, $number: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  pullRequest(number: $number) {
+                    reviewDecision
+                  }
+                }
+              }
+            `;
+            const result = await github.graphql(query, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              number: context.issue.number,
+            });
+            const decision = result.repository.pullRequest?.reviewDecision;
+            if (decision !== 'APPROVED') {
+              core.setFailed(`Pull request review decision is ${decision ?? 'UNKNOWN'}`);
+            }
       - name: Block auto-merge
         run: |
           echo "Auto merge is disabled by policy"
