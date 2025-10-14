@@ -74,11 +74,11 @@ def load_config(config_dir: str, use_dummy: bool=False) -> LoadedConfig:
         routes=routes_cfg
     )
     for route_name, route in routes_cfg.items():
-        referenced = [route.primary, *route.fallback]
-        for provider_name in referenced:
+        referenced = [(route.primary, "primary"), *[(name, "fallback") for name in route.fallback]]
+        for provider_name, origin in referenced:
             if provider_name not in providers:
                 raise ValueError(
-                    f"Route '{route_name}' references undefined provider '{provider_name}'"
+                    f"Route '{route_name}' references undefined provider '{provider_name}' in {origin}"
                 )
     return LoadedConfig(providers=providers, router=router)
 
