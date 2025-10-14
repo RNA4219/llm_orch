@@ -50,3 +50,9 @@ def test_dummy_env_true_variants() -> None:
         c = TestClient(load_app(value))
         r = c.get("/healthz")
         assert r.status_code == 200
+
+
+def test_load_app_truthy_regression() -> None:
+    for value in ("true", "yes"):
+        app = load_app(value)
+        assert isinstance(app, FastAPI)
