@@ -50,3 +50,15 @@ def test_dummy_env_true_variants() -> None:
         c = TestClient(load_app(value))
         r = c.get("/healthz")
         assert r.status_code == 200
+
+
+def test_health_switch_to_dummy_via_init_dependencies() -> None:
+    app = load_app()
+    from src.orch import server
+
+    server.init_dependencies(use_dummy=True)
+    c = TestClient(app)
+    r = c.get("/healthz")
+    assert r.status_code == 200
+    data = r.json()
+    assert set(data["providers"]) == {"hosted_fast", "frontier_primary", "frontier_backup", "local_7b"}

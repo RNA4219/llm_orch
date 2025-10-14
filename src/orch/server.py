@@ -1,9 +1,9 @@
-import os
 import asyncio
+import os
 import time
 from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse
-from .router import load_config, RoutePlanner
+from .router import LoadedConfig, RoutePlanner, load_config
 from .metrics import MetricsLogger
 from .rate_limiter import ProviderGuards
 from .types import ChatRequest, chat_response_from_provider
@@ -31,13 +31,26 @@ def _env_var_as_bool(name: str, *, default: bool = False) -> bool:
     return default
 
 
-USE_DUMMY = _env_var_as_bool("ORCH_USE_DUMMY")
+METRICS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "metrics")
 
-cfg = load_config(CONFIG_DIR, use_dummy=USE_DUMMY)
-providers = ProviderRegistry(cfg.providers)
-guards = ProviderGuards(cfg.providers)
-planner = RoutePlanner(cfg.router, cfg.providers)
-metrics = MetricsLogger(os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "metrics"))
+cfg: LoadedConfig
+providers: ProviderRegistry
+guards: ProviderGuards
+planner: RoutePlanner
+metrics: MetricsLogger
+
+
+def init_dependencies(*, use_dummy: bool) -> None:
+    global cfg, providers, guards, planner, metrics
+
+    cfg = load_config(CONFIG_DIR, use_dummy=use_dummy)
+    providers = ProviderRegistry(cfg.providers)
+    guards = ProviderGuards(cfg.providers)
+    planner = RoutePlanner(cfg.router, cfg.providers)
+    metrics = MetricsLogger(METRICS_DIR)
+
+
+init_dependencies(use_dummy=_env_var_as_bool("ORCH_USE_DUMMY"))
 
 @app.get("/healthz")
 async def healthz():
