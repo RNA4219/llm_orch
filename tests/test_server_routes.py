@@ -303,3 +303,64 @@ def test_chat_metrics_provider_error_includes_req_id(
 
     assert response.status_code == 502
     assert_single_req_id(records)
+
+
+def test_chat_retries_success_after_transient_failures(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+    records = capture_metric_records(server_module, monkeypatch)
+
+    async def no_sleep(_: float) -> None:
+        return None
+
+    class FlakyProvider:
+        model = "dummy"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def chat(
+            self,
+            model: str,
+            messages: list[dict[str, str]],
+            *,
+            temperature: float = 0.2,
+            max_tokens: int = 2048,
+        ) -> "ProviderChatResponse":
+            from src.orch.types import ProviderChatResponse
+
+            self.calls += 1
+            if self.calls < 3:
+                raise RuntimeError(f"fail-{self.calls}")
+            last_user = next(
+                (m["content"] for m in reversed(messages) if m["role"] == "user"),
+                "",
+            )
+            return ProviderChatResponse(
+                status_code=200,
+                model=model,
+                content=f"dummy:{last_user}",
+            )
+
+    provider = FlakyProvider()
+    monkeypatch.setattr(server_module.asyncio, "sleep", no_sleep)
+    monkeypatch.setitem(server_module.providers.providers, "dummy", provider)
+
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "dummy",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert provider.calls == 3
+    success_records = [record for record in records if record.get("ok") is True]
+    assert len(success_records) == 1
+    assert success_records[0]["retries"] == 2
+    failure_records = [record for record in records if record.get("ok") is False]
+    assert [record["retries"] for record in failure_records] == [0, 1]
