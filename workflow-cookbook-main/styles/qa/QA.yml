@@ -1,0 +1,16 @@
+# QA スタイル: 禁止用語と表記揺れ
+extends: substitution
+message: "表記ゆれ: '%s' は '%s' に統一してください。"
+level: warning
+ignorecase: true
+swap:
+  Github: GitHub
+  webhook: Webhook
+---
+extends: existence
+message: "禁止用語: '%s' は使用しないでください。"
+level: error
+ignorecase: true
+tokens:
+  - TBD
+  - WIP

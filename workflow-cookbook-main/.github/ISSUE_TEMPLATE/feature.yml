@@ -1,0 +1,17 @@
+name: "Feature request"
+description: "機能追加の提案"
+labels: ["type:feature"]
+body:
+  - type: input
+    id: intent_id
+    attributes: { label: Intent ID, description: "新規の場合は仮IDでOK" }
+    validations: { required: true }
+  - type: textarea
+    id: goal
+    attributes: { label: 目的/非目的, render: markdown }
+  - type: textarea
+    id: acceptance
+    attributes: { label: 受入基準（EVALUATIONに反映）, render: markdown }
+  - type: textarea
+    id: risks
+    attributes: { label: 想定リスク/影響範囲, render: markdown }

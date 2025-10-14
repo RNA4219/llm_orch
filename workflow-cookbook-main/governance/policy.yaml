@@ -1,0 +1,20 @@
+self_modification:
+  forbidden_paths:
+    - "/core/schema/**"
+    - "/auth/**"
+  require_human_approval:
+    - "/governance/**"
+    - "/billing/**"
+
+canary:
+  abort_rules:
+    - name: http_5xx_spike
+      metric: http_5xx_rate
+      threshold: 0.8        # %
+      window: "5m"
+      action: rollback
+
+slo:
+  lead_time_p95_hours: 72
+  mttr_p95_minutes: 60
+  change_failure_rate_max: 0.10
