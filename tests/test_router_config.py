@@ -1,29 +1,50 @@
-import importlib
-import sys
 from pathlib import Path
+import sys
 
 import pytest
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-def _load_router_module():
-    project_root = Path(__file__).resolve().parents[1]
-    if str(project_root) not in sys.path:
-        sys.path.insert(0, str(project_root))
-    importlib.invalidate_caches()
-    return importlib.import_module("src.orch.router")
+from src.orch.router import load_config
 
 
-def test_load_config_raises_when_fallback_provider_missing(tmp_path):
-    load_config = _load_router_module().load_config
-    config_dir = tmp_path
+def write_config(tmp_path):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
     (config_dir / "providers.toml").write_text(
-        """[existing]\nbase_url = \"https://example.com\"\nmodel = \"gpt\"\n""",
-        encoding="utf-8",
+        """
+[alpha]
+type = "mock"
+base_url = "https://example.com"
+model = "gpt"
+auth_env = "TOKEN"
+rpm = 60
+concurrency = 4
+"""
     )
     (config_dir / "router.yaml").write_text(
-        """routes:\n  DEFAULT:\n    primary: existing\n    fallback:\n      - missing\n""",
+        """
+defaults:
+  temperature: 0.1
+  max_tokens: 128
+  task_header: x-orch-task-kind
+routes:
+  task-a:
+    primary: beta
+    fallback:
+      - alpha
+""",
         encoding="utf-8",
     )
+    return str(config_dir)
 
-    with pytest.raises(ValueError, match="fallback"):
-        load_config(str(config_dir))
+
+def test_load_config_fails_for_unknown_provider(tmp_path):
+    config_dir = write_config(tmp_path)
+
+    with pytest.raises(ValueError) as excinfo:
+        load_config(config_dir)
+
+    assert "beta" in str(excinfo.value)

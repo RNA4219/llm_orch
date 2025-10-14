@@ -1,6 +1,7 @@
 import os
 from dataclasses import dataclass
-from typing import Dict, Any
+from typing import Dict
+
 import tomllib
 import yaml
 
@@ -73,14 +74,23 @@ def load_config(config_dir: str, use_dummy: bool=False) -> LoadedConfig:
         ),
         routes=routes_cfg
     )
-    for route_name, route in routes_cfg.items():
-        referenced = [(route.primary, "primary"), *[(name, "fallback") for name in route.fallback]]
-        for provider_name, origin in referenced:
-            if provider_name not in providers:
-                raise ValueError(
-                    f"Route '{route_name}' references undefined provider '{provider_name}' in {origin}"
-                )
+    validate_router_config(router, providers)
     return LoadedConfig(providers=providers, router=router)
+
+
+def validate_router_config(router: RouterConfig, providers: Dict[str, ProviderDef]) -> None:
+    for route_name, route in router.routes.items():
+        referenced = [route.primary, *route.fallback]
+        for provider_name in referenced:
+            if provider_name not in providers:
+                available = ", ".join(sorted(providers)) or "<none>"
+                raise ValueError(
+                    "Route '{route}' references undefined provider '{provider}'. Available providers: {available}".format(
+                        route=route_name,
+                        provider=provider_name,
+                        available=available,
+                    )
+                )
 
 class RoutePlanner:
     def __init__(self, cfg: RouterConfig, providers: Dict[str, ProviderDef]):
