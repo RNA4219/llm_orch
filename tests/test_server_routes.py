@@ -277,6 +277,110 @@ concurrency = 1
     assert records[-1]["model"] == "req-model"
 
 
+def test_chat_metrics_records_model_precedence(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    providers_file = route_test_config / "providers.dummy.toml"
+    providers_file.write_text(
+        """
+[dummy]
+type = "dummy"
+model = ""
+base_url = ""
+rpm = 60
+concurrency = 1
+""".strip()
+    )
+
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+    records = capture_metric_records(server_module, monkeypatch)
+
+    from src.orch.types import ProviderChatResponse
+
+    class SuccessfulProvider:
+        model = ""
+
+        def __init__(self) -> None:
+            self.chat = AsyncMock(
+                return_value=ProviderChatResponse(
+                    status_code=200,
+                    model="response-model",
+                    content="dummy:hi",
+                    usage_prompt_tokens=0,
+                    usage_completion_tokens=0,
+                )
+            )
+
+    monkeypatch.setitem(
+        server_module.providers.providers,
+        "dummy",
+        SuccessfulProvider(),
+    )
+
+    client = TestClient(app)
+    success_response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "req-model",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+
+    assert success_response.status_code == 200
+    assert records
+    success_record = records[-1]
+    assert success_record["ok"] is True
+    assert success_record["model"] == "response-model"
+
+    class FailingProvider:
+        def __init__(self, model: str) -> None:
+            self.model = model
+            self.chat = AsyncMock(side_effect=RuntimeError("boom"))
+
+    monkeypatch.setattr(server_module, "MAX_PROVIDER_ATTEMPTS", 1)
+
+    monkeypatch.setitem(
+        server_module.providers.providers,
+        "dummy",
+        FailingProvider(model=""),
+    )
+
+    failure_response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "req-model",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+
+    assert failure_response.status_code == 502
+    assert len(records) >= 2
+    failure_record = records[-1]
+    assert failure_record["ok"] is False
+    assert failure_record["model"] == "req-model"
+
+    monkeypatch.setitem(
+        server_module.providers.providers,
+        "dummy",
+        FailingProvider(model="prov-model"),
+    )
+
+    fallback_failure_response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+
+    assert fallback_failure_response.status_code == 502
+    assert len(records) >= 3
+    fallback_record = records[-1]
+    assert fallback_record["ok"] is False
+    assert fallback_record["model"] == "prov-model"
+
+
 def test_chat_missing_header_routes_to_task_header_default(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
