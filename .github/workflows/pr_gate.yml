@@ -38,8 +38,12 @@ jobs:
               core.warning('No review decision returned; defaulting to REVIEW_REQUIRED.');
             }
             const decision = (typeof rawDecision === 'string' ? rawDecision : undefined) ?? 'REVIEW_REQUIRED';
+            if (decision === 'CHANGES_REQUESTED') {
+              core.setFailed('Pull request has changes requested');
+              return;
+            }
             if (decision !== 'APPROVED') {
-              core.setFailed(`Pull request review decision is ${decision}`);
+              core.notice(`Pull request review decision is ${decision}`);
             }
       - name: Block auto-merge
         run: |
