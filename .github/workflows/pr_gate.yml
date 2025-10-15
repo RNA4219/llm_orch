@@ -28,9 +28,10 @@ jobs:
                 'GraphQL-Features': 'pull-request-review-decision',
               },
             });
-            const decision = result.repository.pullRequest?.reviewDecision;
+            const decisionRaw = result.repository.pullRequest?.reviewDecision;
+            const decision = decisionRaw ?? 'REVIEW_REQUIRED';
             if (decision !== 'APPROVED') {
-              core.setFailed(`Pull request review decision is ${decision ?? 'UNKNOWN'}`);
+              core.setFailed(`Pull request review decision is ${decision}`);
             }
       - name: Block auto-merge
         run: |
