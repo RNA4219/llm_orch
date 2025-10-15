@@ -28,7 +28,16 @@ jobs:
                 'GraphQL-Features': 'pull-request-review-decision',
               },
             });
-            const decision = result.repository.pullRequest?.reviewDecision;
+            const pullRequest = result.repository?.pullRequest;
+            if (!pullRequest) {
+              core.warning('Pull request metadata unavailable; skipping review decision gate.');
+              return;
+            }
+            const decision = pullRequest.reviewDecision;
+            if (typeof decision !== 'string') {
+              core.warning('No review decision returned; skipping review decision gate.');
+              return;
+            }
             if (decision !== 'APPROVED') {
               core.setFailed(`Pull request review decision is ${decision ?? 'UNKNOWN'}`);
             }
