@@ -277,6 +277,39 @@ concurrency = 1
     assert records[-1]["model"] == "req-model"
 
 
+def test_chat_metrics_records_status_bad_gateway_on_total_failure(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+    records = capture_metric_records(server_module, monkeypatch)
+
+    class FailingProvider:
+        model = ""
+
+        def __init__(self) -> None:
+            self.chat = AsyncMock(side_effect=RuntimeError("boom"))
+
+    monkeypatch.setitem(server_module.providers.providers, "dummy", FailingProvider())
+    monkeypatch.setattr(server_module, "MAX_PROVIDER_ATTEMPTS", 1)
+
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "req-model",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+
+    assert records
+    failure_record = records[-1]
+    assert failure_record["ok"] is False
+    assert failure_record["status"] == server_module.BAD_GATEWAY_STATUS
+
+    assert response.status_code == 502
+
+
 def test_chat_metrics_records_model_precedence(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

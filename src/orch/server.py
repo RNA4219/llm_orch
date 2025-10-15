@@ -146,6 +146,7 @@ async def chat_completions(req: Request, body: ChatRequest):
         return JSONResponse(chat_response_from_provider(success_response))
 
     latency_ms = int((time.perf_counter() - start) * 1000)
+    failure_status = BAD_GATEWAY_STATUS
     failure_record = {
         "req_id": req_id,
         "ts": time.time(),
@@ -154,7 +155,7 @@ async def chat_completions(req: Request, body: ChatRequest):
         "model": last_model,
         "latency_ms": latency_ms,
         "ok": False,
-        "status": BAD_GATEWAY_STATUS,
+        "status": failure_status,
         "error": last_err or "all providers failed",
         "usage_prompt": 0,
         "usage_completion": 0,
@@ -162,5 +163,5 @@ async def chat_completions(req: Request, body: ChatRequest):
     }
     await metrics.write(failure_record)
     return JSONResponse(
-        {"error": {"message": failure_record["error"]}}, status_code=BAD_GATEWAY_STATUS
+        {"error": {"message": failure_record["error"]}}, status_code=failure_status
     )
