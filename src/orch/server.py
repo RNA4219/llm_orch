@@ -70,6 +70,8 @@ async def chat_completions(req: Request, body: ChatRequest):
             "ok": False,
             "status": 400,
             "error": detail,
+            "usage_prompt": 0,
+            "usage_completion": 0,
             "retries": 0,
         })
         raise HTTPException(status_code=400, detail=detail)
