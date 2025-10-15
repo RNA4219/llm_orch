@@ -1,4 +1,5 @@
 import os
+import re
 from urllib.parse import urljoin, urlparse
 from typing import Dict, Any, List
 
@@ -73,7 +74,10 @@ class OpenAICompatProvider(BaseProvider):
 
 class AnthropicProvider(BaseProvider):
     async def chat(self, model: str, messages: List[dict[str, str]], temperature=0.2, max_tokens=2048) -> ProviderChatResponse:
-        url = f"{self.defn.base_url.rstrip('/')}/v1/messages"
+        base_url = self.defn.base_url.rstrip("/")
+        versioned_base = re.search(r"/v\d+$", base_url)
+        url_suffix = "/messages" if versioned_base else "/v1/messages"
+        url = f"{base_url}{url_suffix}"
         headers: dict[str, str] = {
             "anthropic-version": "2023-06-01",
             "Content-Type": "application/json",
