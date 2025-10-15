@@ -767,7 +767,7 @@ def test_chat_metrics_does_not_retry_on_http_client_error(
     records = capture_metric_records(server_module, monkeypatch)
 
     request = httpx.Request("POST", "https://example.invalid")
-    response = httpx.Response(status_code=400, request=request)
+    response = httpx.Response(status_code=400, request=request, text="bad request")
     chat_mock = AsyncMock(
         side_effect=httpx.HTTPStatusError("bad request", request=request, response=response)
     )
@@ -789,11 +789,14 @@ def test_chat_metrics_does_not_retry_on_http_client_error(
         },
     )
 
-    assert response_obj.status_code == 502
+    assert response_obj.status_code == 400
+    assert response_obj.json()["error"]["message"] == "bad request"
     assert chat_mock.await_count == 1
     assert records
     failure_record = records[-1]
     assert failure_record["retries"] == 0
+    assert failure_record["status"] == 400
+    assert failure_record["error"] == "bad request"
 
 
 def test_chat_metrics_transient_provider_error_usage_zero(
