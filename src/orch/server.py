@@ -75,52 +75,63 @@ async def chat_completions(req: Request, body: ChatRequest):
             "retries": 0,
         })
         raise HTTPException(status_code=400, detail=detail)
-    attempt = 0
     last_err: str | None = None
     usage_prompt = 0
     usage_completion = 0
     normalized_messages = [{"role": m.role, "content": m.content} for m in body.messages]
 
     for provider_name in [route.primary] + route.fallback:
-        attempt += 1
         prov = providers.get(provider_name)
         guard = guards.get(provider_name)
-        async with guard:
-            try:
-                resp = await prov.chat(body.model, normalized_messages, temperature=body.temperature, max_tokens=body.max_tokens)
-                latency = int((time.perf_counter() - start) * 1000)
-                usage_prompt = resp.usage_prompt_tokens or 0
-                usage_completion = resp.usage_completion_tokens or 0
-                await metrics.write({
-                    "req_id": req_id,
-                    "ts": time.time(),
-                    "task": task,
-                    "provider": provider_name,
-                    "model": prov.model,
-                    "latency_ms": latency,
-                    "ok": True,
-                    "status": resp.status_code,
-                    "retries": attempt - 1,
-                    "usage_prompt": usage_prompt,
-                    "usage_completion": usage_completion,
-                })
-                return JSONResponse(chat_response_from_provider(resp))
-            except Exception as e:
-                last_err = str(e)
-                await metrics.write({
-                    "req_id": req_id,
-                    "ts": time.time(),
-                    "task": task,
-                    "provider": provider_name,
-                    "model": prov.model,
-                    "latency_ms": int((time.perf_counter() - start) * 1000),
-                    "ok": False,
-                    "status": 0,
-                    "error": last_err,
-                    "usage_prompt": 0,
-                    "usage_completion": 0,
-                    "retries": attempt - 1,
-                })
+        for attempt in range(1, 4):
+            async with guard:
+                try:
+                    resp = await prov.chat(
+                        body.model,
+                        normalized_messages,
+                        temperature=body.temperature,
+                        max_tokens=body.max_tokens,
+                    )
+                except Exception as exc:
+                    last_err = str(exc)
+                    await metrics.write(
+                        {
+                            "req_id": req_id,
+                            "ts": time.time(),
+                            "task": task,
+                            "provider": provider_name,
+                            "model": prov.model,
+                            "latency_ms": int((time.perf_counter() - start) * 1000),
+                            "ok": False,
+                            "status": 0,
+                            "error": last_err,
+                            "usage_prompt": 0,
+                            "usage_completion": 0,
+                            "retries": attempt - 1,
+                        }
+                    )
+                else:
+                    latency = int((time.perf_counter() - start) * 1000)
+                    usage_prompt = resp.usage_prompt_tokens or 0
+                    usage_completion = resp.usage_completion_tokens or 0
+                    await metrics.write(
+                        {
+                            "req_id": req_id,
+                            "ts": time.time(),
+                            "task": task,
+                            "provider": provider_name,
+                            "model": prov.model,
+                            "latency_ms": latency,
+                            "ok": True,
+                            "status": resp.status_code,
+                            "retries": attempt - 1,
+                            "usage_prompt": usage_prompt,
+                            "usage_completion": usage_completion,
+                        }
+                    )
+                    return JSONResponse(chat_response_from_provider(resp))
+
+            if attempt < 3:
                 await asyncio.sleep(min(0.25 * attempt, 2.0))  # simple backoff
 
     return JSONResponse({"error": {"message": last_err or "all providers failed"}}, status_code=502)
