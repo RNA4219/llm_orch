@@ -6,6 +6,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI
@@ -423,3 +424,50 @@ def test_chat_retries_success_after_transient_failures(
     assert success_records[0]["retries"] == 2
     failure_records = [record for record in records if record.get("ok") is False]
     assert [record["retries"] for record in failure_records] == [0, 1]
+
+
+def test_chat_retries_uses_three_attempts_with_mock(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+    records = capture_metric_records(server_module, monkeypatch)
+
+    async def no_sleep(_: float) -> None:
+        return None
+
+    from src.orch.types import ProviderChatResponse
+
+    success_response = ProviderChatResponse(
+        status_code=200,
+        model="dummy",
+        content="dummy:hi",
+    )
+
+    chat_mock = AsyncMock(
+        side_effect=[RuntimeError("fail-1"), RuntimeError("fail-2"), success_response]
+    )
+
+    class MockProvider:
+        model = "dummy"
+
+        def __init__(self) -> None:
+            self.chat = chat_mock
+
+    monkeypatch.setattr(server_module.asyncio, "sleep", no_sleep)
+    monkeypatch.setitem(server_module.providers.providers, "dummy", MockProvider())
+
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "dummy",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert chat_mock.await_count == 3
+    success_records = [record for record in records if record.get("ok") is True]
+    assert len(success_records) == 1
+    assert success_records[0]["retries"] == 2

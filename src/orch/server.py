@@ -42,6 +42,8 @@ guards = ProviderGuards(cfg.providers)
 planner = RoutePlanner(cfg.router, cfg.providers)
 metrics = MetricsLogger(os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "metrics"))
 
+MAX_PROVIDER_ATTEMPTS = 3
+
 @app.get("/healthz")
 async def healthz():
     return {"status": "ok", "providers": list(cfg.providers.keys())}
@@ -83,7 +85,7 @@ async def chat_completions(req: Request, body: ChatRequest):
     for provider_name in [route.primary] + route.fallback:
         prov = providers.get(provider_name)
         guard = guards.get(provider_name)
-        for attempt in range(1, 4):
+        for attempt in range(1, MAX_PROVIDER_ATTEMPTS + 1):
             async with guard:
                 try:
                     resp = await prov.chat(
@@ -131,7 +133,7 @@ async def chat_completions(req: Request, body: ChatRequest):
                     )
                     return JSONResponse(chat_response_from_provider(resp))
 
-            if attempt < 3:
+            if attempt < MAX_PROVIDER_ATTEMPTS:
                 await asyncio.sleep(min(0.25 * attempt, 2.0))  # simple backoff
 
     return JSONResponse({"error": {"message": last_err or "all providers failed"}}, status_code=502)
