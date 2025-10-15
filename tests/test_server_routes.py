@@ -842,3 +842,57 @@ def test_chat_retries_uses_three_attempts_with_mock(
     success_records = [record for record in records if record.get("ok") is True]
     assert len(success_records) == 1
     assert success_records[0]["retries"] == 2
+
+
+def test_chat_metrics_retry_success_logs_final_result_once(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+
+    async def no_sleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr(server_module.asyncio, "sleep", no_sleep)
+
+    metrics_mock = AsyncMock()
+    monkeypatch.setattr(server_module.metrics, "write", metrics_mock)
+
+    from src.orch.types import ProviderChatResponse
+
+    responses: list[ProviderChatResponse | Exception] = [
+        RuntimeError("boom"),
+        ProviderChatResponse(
+            status_code=200,
+            model="dummy",
+            content="dummy:hi",
+            usage_prompt_tokens=0,
+            usage_completion_tokens=0,
+        ),
+    ]
+
+    class MockProvider:
+        model = "dummy"
+
+        async def chat(self, *args: object, **kwargs: object) -> ProviderChatResponse:
+            result = responses.pop(0)
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+    monkeypatch.setitem(server_module.providers.providers, "dummy", MockProvider())
+
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "dummy",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert metrics_mock.await_count == 1
+    record = metrics_mock.await_args_list[0].args[0]
+    assert record["ok"] is True
+    assert record["retries"] == 1
