@@ -23,11 +23,25 @@ def compute_p95(durations: list[int]) -> int:
         return 0
     if len(durations) == 1:
         return int(durations[0])
+
+    sorted_durations = sorted(durations)
+    sample_count = len(sorted_durations)
+
+    if sample_count < 20:
+        try:
+            return int(
+                statistics.quantiles(
+                    sorted_durations, n=20, method="inclusive"
+                )[18]
+            )
+        except statistics.StatisticsError:
+            index = min(sample_count - 1, math.ceil(0.95 * sample_count) - 1)
+            return int(sorted_durations[index])
+
     try:
-        return int(statistics.quantiles(durations, n=20)[18])
+        return int(statistics.quantiles(sorted_durations, n=20)[18])
     except statistics.StatisticsError:
-        sorted_durations = sorted(durations)
-        index = min(len(sorted_durations) - 1, math.ceil(0.95 * len(sorted_durations)) - 1)
+        index = min(sample_count - 1, math.ceil(0.95 * sample_count) - 1)
         return int(sorted_durations[index])
 
 def main():

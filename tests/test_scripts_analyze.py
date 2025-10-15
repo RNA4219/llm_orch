@@ -32,3 +32,24 @@ def test_analyze_main_generates_report(tmp_path, monkeypatch):
     analyze.main()
 
     assert report_path.exists(), "Report file should be generated"
+
+
+def test_analyze_main_single_record_p95(tmp_path, monkeypatch):
+    log_path = tmp_path / "logs" / "test.jsonl"
+    report_path = tmp_path / "reports" / "today.md"
+    issue_path = tmp_path / "reports" / "issue_suggestions.md"
+
+    log_path.parent.mkdir(parents=True)
+    report_path.parent.mkdir(parents=True)
+
+    record = {"name": "sample::solo", "duration_ms": 123, "status": "pass"}
+    with log_path.open("w", encoding="utf-8") as fp:
+        fp.write(json.dumps(record) + "\n")
+
+    monkeypatch.setattr(analyze, "LOG", log_path)
+    monkeypatch.setattr(analyze, "REPORT", report_path)
+    monkeypatch.setattr(analyze, "ISSUE_OUT", issue_path)
+
+    analyze.main()
+
+    assert "- Duration p95: 123 ms" in report_path.read_text(encoding="utf-8")
