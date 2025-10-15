@@ -73,28 +73,16 @@ class OpenAICompatProvider(BaseProvider):
 
 class AnthropicProvider(BaseProvider):
     async def chat(self, model: str, messages: List[dict[str, str]], temperature=0.2, max_tokens=2048) -> ProviderChatResponse:
-        base = self.defn.base_url.rstrip("/")
-        parsed = urlparse(base)
-        path = parsed.path or ""
-        segments = [segment for segment in path.split("/") if segment]
-
-        def is_version_segment(segment: str) -> bool:
-            if not segment:
-                return False
-            lowered = segment.lower()
-            if not lowered.startswith("v"):
-                return False
-            suffix = lowered[1:]
-            return bool(suffix) and suffix[0].isdigit()
-
-        should_append_v1 = True
-        if segments and is_version_segment(segments[-1]):
-            should_append_v1 = False
-
-        base_for_join = base if not should_append_v1 else f"{base}/v1"
-        url = urljoin(f"{base_for_join.rstrip('/')}/", "messages")
-        key = os.environ.get(self.defn.auth_env or "", "")
-        headers = {"x-api-key": key, "anthropic-version": "2023-06-01", "Content-Type": "application/json"}
+        url = f"{self.defn.base_url.rstrip('/')}/v1/messages"
+        headers: dict[str, str] = {
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        }
+        auth_env = self.defn.auth_env
+        if auth_env:
+            key = os.environ.get(auth_env, "")
+            if key:
+                headers["x-api-key"] = key
         system_messages = [m["content"] for m in messages if m["role"] == "system"]
         mapped: list[dict[str, Any]] = []
         for message in messages:
