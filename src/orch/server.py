@@ -130,7 +130,7 @@ async def chat_completions(req: Request, body: ChatRequest):
                             "ts": time.time(),
                             "task": task,
                             "provider": provider_name,
-                            "model": resp.model,
+                            "model": resp.model or body.model or prov.model,
                             "latency_ms": latency_ms,
                             "ok": True,
                             "status": resp.status_code,
