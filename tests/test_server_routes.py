@@ -113,13 +113,57 @@ def test_chat_rejects_stream_requests(
 
     assert response.status_code == 400
     body = response.json()
-    assert body["error"]["message"] == "streaming responses are not supported"
+    assert body["error"]["message"] == server_module.STREAMING_UNSUPPORTED_ERROR
     provider_chat.assert_not_awaited()
     assert records
     record = records[-1]
     assert record["ok"] is False
     assert record["status"] == 400
-    assert record["error"] == "streaming responses are not supported"
+    assert record["error"] == server_module.STREAMING_UNSUPPORTED_ERROR
+
+
+def test_chat_stream_requests_skip_planner_and_record_metrics(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+    records = capture_metric_records(server_module, monkeypatch)
+
+    provider_chat = AsyncMock()
+
+    class MockProvider:
+        model = "dummy"
+
+        def __init__(self) -> None:
+            self.chat = provider_chat
+
+    monkeypatch.setitem(server_module.providers.providers, "dummy", MockProvider())
+
+    def fail_plan(*_: object, **__: object) -> None:
+        pytest.fail("planner.plan must not be invoked for streaming requests")
+
+    monkeypatch.setattr(server_module.planner, "plan", fail_plan)
+
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "dummy",
+            "messages": [{"role": "user", "content": "hi"}],
+            "stream": True,
+        },
+    )
+
+    assert response.status_code == 400
+    error_reason = server_module.STREAMING_UNSUPPORTED_ERROR
+    assert response.json()["error"]["message"] == error_reason
+    provider_chat.assert_not_awaited()
+    assert_single_req_id(records)
+    assert records[-1]["ok"] is False
+    assert records[-1]["status"] == 400
+    assert records[-1]["error"] == error_reason
+    assert records[-1]["provider"] == "unsupported"
+    assert records[-1]["retries"] == 0
 
 
 @pytest.mark.parametrize(

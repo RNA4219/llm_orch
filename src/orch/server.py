@@ -78,6 +78,7 @@ def _http_status_error_details(exc: httpx.HTTPStatusError) -> tuple[int | None, 
 
 MAX_PROVIDER_ATTEMPTS = 3
 BAD_GATEWAY_STATUS = 502
+STREAMING_UNSUPPORTED_ERROR = "streaming responses are not supported"
 
 @app.get("/healthz")
 async def healthz():
@@ -94,7 +95,7 @@ async def chat_completions(req: Request, body: ChatRequest):
     start = time.perf_counter()
     req_id = str(uuid.uuid4())
     if body.stream:
-        reason = "streaming responses are not supported"
+        reason = STREAMING_UNSUPPORTED_ERROR
         await metrics.write(
             {
                 "req_id": req_id,
