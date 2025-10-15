@@ -80,6 +80,9 @@ async def chat_completions(req: Request, body: ChatRequest):
     last_err: str | None = None
     usage_prompt = 0
     usage_completion = 0
+    attempt_count = 0
+    last_provider = route.primary
+    last_model = body.model
     normalized_messages = [{"role": m.role, "content": m.content} for m in body.messages]
     if "temperature" in body.model_fields_set and body.temperature is not None:
         temperature = body.temperature
@@ -95,6 +98,7 @@ async def chat_completions(req: Request, body: ChatRequest):
         guard = guards.get(provider_name)
         for attempt in range(1, MAX_PROVIDER_ATTEMPTS + 1):
             async with guard:
+                attempt_count += 1
                 try:
                     resp = await prov.chat(
                         body.model,
@@ -104,22 +108,8 @@ async def chat_completions(req: Request, body: ChatRequest):
                     )
                 except Exception as exc:
                     last_err = str(exc)
-                    latency_ms = int((time.perf_counter() - start) * 1000)
-                    failure_record = {
-                        "req_id": req_id,
-                        "ts": time.time(),
-                        "task": task,
-                        "provider": provider_name,
-                        "model": prov.model or body.model,
-                        "latency_ms": latency_ms,
-                        "ok": False,
-                        "status": 0,
-                        "error": last_err,
-                        "usage_prompt": 0,
-                        "usage_completion": 0,
-                        "retries": attempt - 1,
-                    }
-                    await metrics.write(failure_record)
+                    last_provider = provider_name
+                    last_model = prov.model or body.model
                 else:
                     latency_ms = int((time.perf_counter() - start) * 1000)
                     usage_prompt = resp.usage_prompt_tokens or 0
@@ -134,7 +124,7 @@ async def chat_completions(req: Request, body: ChatRequest):
                             "latency_ms": latency_ms,
                             "ok": True,
                             "status": resp.status_code,
-                            "retries": attempt - 1,
+                            "retries": attempt_count - 1,
                             "usage_prompt": usage_prompt,
                             "usage_completion": usage_completion,
                         }
@@ -144,4 +134,20 @@ async def chat_completions(req: Request, body: ChatRequest):
             if attempt < MAX_PROVIDER_ATTEMPTS:
                 await asyncio.sleep(min(0.25 * attempt, 2.0))  # simple backoff
 
-    return JSONResponse({"error": {"message": last_err or "all providers failed"}}, status_code=502)
+    latency_ms = int((time.perf_counter() - start) * 1000)
+    failure_record = {
+        "req_id": req_id,
+        "ts": time.time(),
+        "task": task,
+        "provider": last_provider,
+        "model": last_model,
+        "latency_ms": latency_ms,
+        "ok": False,
+        "status": 0,
+        "error": last_err or "all providers failed",
+        "usage_prompt": 0,
+        "usage_completion": 0,
+        "retries": max(attempt_count - 1, 0),
+    }
+    await metrics.write(failure_record)
+    return JSONResponse({"error": {"message": failure_record["error"]}}, status_code=502)
