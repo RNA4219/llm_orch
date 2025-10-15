@@ -29,7 +29,10 @@ jobs:
               },
             });
             const decisionRaw = result.repository.pullRequest?.reviewDecision;
-            const decision = decisionRaw ?? 'REVIEW_REQUIRED';
+            const decision =
+              decisionRaw === 'UNKNOWN' || decisionRaw === null || decisionRaw === undefined
+                ? 'REVIEW_REQUIRED'
+                : decisionRaw;
             if (decision !== 'APPROVED') {
               core.setFailed(`Pull request review decision is ${decision}`);
             }
