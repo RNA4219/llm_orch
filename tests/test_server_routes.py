@@ -179,6 +179,104 @@ def test_chat_missing_header_uses_default_task(route_test_config: Path) -> None:
     assert body["choices"][0]["message"]["content"] == "dummy:hi"
 
 
+def test_chat_metrics_records_response_model_when_provider_model_missing(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    providers_file = route_test_config / "providers.dummy.toml"
+    providers_file.write_text(
+        """
+[dummy]
+type = "dummy"
+model = ""
+base_url = ""
+rpm = 60
+concurrency = 1
+""".strip()
+    )
+
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+    records = capture_metric_records(server_module, monkeypatch)
+
+    from src.orch.types import ProviderChatResponse
+
+    provider_response = ProviderChatResponse(
+        status_code=200,
+        model="response-model",
+        content="dummy:hi",
+        usage_prompt_tokens=0,
+        usage_completion_tokens=0,
+    )
+    chat_mock = AsyncMock(return_value=provider_response)
+
+    class MockProvider:
+        model = ""
+
+        def __init__(self) -> None:
+            self.chat = chat_mock
+
+    monkeypatch.setitem(server_module.providers.providers, "dummy", MockProvider())
+
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "req-model",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert records
+    assert records[-1]["ok"] is True
+    assert records[-1]["model"] == "response-model"
+
+
+def test_chat_metrics_records_request_model_on_failure_when_provider_model_missing(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    providers_file = route_test_config / "providers.dummy.toml"
+    providers_file.write_text(
+        """
+[dummy]
+type = "dummy"
+model = ""
+base_url = ""
+rpm = 60
+concurrency = 1
+""".strip()
+    )
+
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+    records = capture_metric_records(server_module, monkeypatch)
+
+    chat_mock = AsyncMock(side_effect=RuntimeError("boom"))
+
+    class MockProvider:
+        model = ""
+
+        def __init__(self) -> None:
+            self.chat = chat_mock
+
+    monkeypatch.setitem(server_module.providers.providers, "dummy", MockProvider())
+    monkeypatch.setattr(server_module, "MAX_PROVIDER_ATTEMPTS", 1)
+
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "req-model",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+
+    assert response.status_code == 502
+    assert records
+    assert records[-1]["ok"] is False
+    assert records[-1]["model"] == "req-model"
+
+
 def test_chat_missing_header_routes_to_task_header_default(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
