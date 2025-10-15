@@ -68,3 +68,59 @@ def test_openai_compat_appends_single_v1_segment(monkeypatch: pytest.MonkeyPatch
         assert response.content == "ok"
 
     asyncio.run(run_chat())
+
+
+def test_openai_compat_preserves_perplexity_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider_def = ProviderDef(
+        name="perplexity",
+        type="openai",
+        base_url="https://api.perplexity.ai",
+        model="sonar",
+        auth_env="PERPLEXITY_API_KEY",
+        rpm=60,
+        concurrency=1,
+    )
+    provider = OpenAICompatProvider(provider_def)
+
+    monkeypatch.setenv("PERPLEXITY_API_KEY", "secret")
+
+    captured: dict[str, Any] = {}
+
+    class DummyAsyncClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> "DummyAsyncClient":
+            return self
+
+        async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+            return None
+
+        async def post(self, url: str, headers: dict[str, str], json: dict[str, Any]) -> httpx.Response:
+            captured["url"] = url
+            captured["headers"] = headers
+            captured["json"] = json
+            request = httpx.Request("POST", url, headers=headers)
+            return httpx.Response(
+                status_code=200,
+                json={
+                    "model": "sonar",
+                    "choices": [{"message": {"content": "ok"}}],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 2},
+                },
+                request=request,
+            )
+
+    async def run_chat() -> None:
+        monkeypatch.setattr(httpx, "AsyncClient", DummyAsyncClient)
+        response = await provider.chat(
+            model="sonar",
+            messages=[{"role": "user", "content": "ping"}],
+        )
+
+        assert captured["url"] == "https://api.perplexity.ai/chat/completions"
+        request_json = cast(dict[str, Any], captured["json"])
+        assert request_json["stream"] is False
+        assert response.content == "ok"
+
+    asyncio.run(run_chat())
