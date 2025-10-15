@@ -21,19 +21,30 @@ class OpenAICompatProvider(BaseProvider):
         parsed = urlparse(base)
         path = parsed.path or ""
         normalized_path = path.rstrip("/")
+        path_segments = [segment for segment in normalized_path.split("/") if segment]
+        hostname = (parsed.netloc or "").lower()
+        is_openai_host = hostname.endswith("openai.com")
+
+        def is_version_segment(segment: str) -> bool:
+            if not segment:
+                return False
+            lowered = segment.lower()
+            if not lowered.startswith("v"):
+                return False
+            suffix = lowered[1:]
+            return bool(suffix) and suffix[0].isdigit()
+
+        has_openai_segment = any(segment == "openai" for segment in path_segments)
+        openai_is_last_segment = bool(path_segments and path_segments[-1] == "openai")
 
         should_append_v1 = True
 
-        if "/openai/" in path and not normalized_path.endswith("/openai"):
+        if not normalized_path:
+            should_append_v1 = is_openai_host
+        elif has_openai_segment and not openai_is_last_segment:
             should_append_v1 = False
-        elif not normalized_path:
-            hostname = (parsed.netloc or "").lower()
-            if not hostname.endswith("openai.com"):
-                should_append_v1 = False
-        else:
-            last_segment = normalized_path.rsplit("/", 1)[-1]
-            if last_segment.startswith("v") or normalized_path.endswith("/v1"):
-                should_append_v1 = False
+        elif path_segments and is_version_segment(path_segments[-1]):
+            should_append_v1 = False
 
         base_for_join = f"{base}/v1" if should_append_v1 else base
 

@@ -14,19 +14,13 @@ from src.orch.providers import OpenAICompatProvider
 from src.orch.router import ProviderDef
 
 
-def test_openai_compat_appends_single_v1_segment(monkeypatch: pytest.MonkeyPatch) -> None:
-    provider_def = ProviderDef(
-        name="openai",
-        type="openai",
-        base_url="https://api.openai.com/v1",
-        model="gpt-4o",
-        auth_env="OPENAI_API_KEY",
-        rpm=60,
-        concurrency=1,
-    )
+def _run_chat_and_capture(
+    provider_def: ProviderDef,
+    env_name: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[dict[str, Any], Any]:
     provider = OpenAICompatProvider(provider_def)
-
-    monkeypatch.setenv("OPENAI_API_KEY", "secret")
+    monkeypatch.setenv(env_name, "secret")
 
     captured: dict[str, Any] = {}
 
@@ -48,26 +42,41 @@ def test_openai_compat_appends_single_v1_segment(monkeypatch: pytest.MonkeyPatch
             return httpx.Response(
                 status_code=200,
                 json={
-                    "model": "gpt-4o",
+                    "model": provider_def.model,
                     "choices": [{"message": {"content": "ok"}}],
                     "usage": {"prompt_tokens": 1, "completion_tokens": 2},
                 },
                 request=request,
             )
 
-    async def run_chat() -> None:
+    async def run_chat() -> Any:
         monkeypatch.setattr(httpx, "AsyncClient", DummyAsyncClient)
-        response = await provider.chat(
-            model="gpt-4o",
+        return await provider.chat(
+            model=provider_def.model,
             messages=[{"role": "user", "content": "ping"}],
         )
 
-        assert captured["url"] == "https://api.openai.com/v1/chat/completions"
-        request_json = cast(dict[str, Any], captured["json"])
-        assert request_json["stream"] is False
-        assert response.content == "ok"
+    response = asyncio.run(run_chat())
+    return captured, response
 
-    asyncio.run(run_chat())
+
+def test_openai_compat_appends_single_v1_segment(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider_def = ProviderDef(
+        name="openai",
+        type="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-4o",
+        auth_env="OPENAI_API_KEY",
+        rpm=60,
+        concurrency=1,
+    )
+
+    captured, response = _run_chat_and_capture(provider_def, "OPENAI_API_KEY", monkeypatch)
+
+    assert captured["url"] == "https://api.openai.com/v1/chat/completions"
+    request_json = cast(dict[str, Any], captured["json"])
+    assert request_json["stream"] is False
+    assert response.content == "ok"
 
 
 def test_openai_compat_preserves_perplexity_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -80,47 +89,10 @@ def test_openai_compat_preserves_perplexity_base_url(monkeypatch: pytest.MonkeyP
         rpm=60,
         concurrency=1,
     )
-    provider = OpenAICompatProvider(provider_def)
 
-    monkeypatch.setenv("PERPLEXITY_API_KEY", "secret")
+    captured, response = _run_chat_and_capture(provider_def, "PERPLEXITY_API_KEY", monkeypatch)
 
-    captured: dict[str, Any] = {}
-
-    class DummyAsyncClient:
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
-            pass
-
-        async def __aenter__(self) -> "DummyAsyncClient":
-            return self
-
-        async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
-            return None
-
-        async def post(self, url: str, headers: dict[str, str], json: dict[str, Any]) -> httpx.Response:
-            captured["url"] = url
-            captured["headers"] = headers
-            captured["json"] = json
-            request = httpx.Request("POST", url, headers=headers)
-            return httpx.Response(
-                status_code=200,
-                json={
-                    "model": "sonar",
-                    "choices": [{"message": {"content": "ok"}}],
-                    "usage": {"prompt_tokens": 1, "completion_tokens": 2},
-                },
-                request=request,
-            )
-
-    async def run_chat() -> None:
-        monkeypatch.setattr(httpx, "AsyncClient", DummyAsyncClient)
-        response = await provider.chat(
-            model="sonar",
-            messages=[{"role": "user", "content": "ping"}],
-        )
-
-        assert captured["url"] == "https://api.perplexity.ai/chat/completions"
-        request_json = cast(dict[str, Any], captured["json"])
-        assert request_json["stream"] is False
-        assert response.content == "ok"
-
-    asyncio.run(run_chat())
+    assert captured["url"] == "https://api.perplexity.ai/chat/completions"
+    request_json = cast(dict[str, Any], captured["json"])
+    assert request_json["stream"] is False
+    assert response.content == "ok"
