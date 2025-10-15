@@ -10,7 +10,7 @@ from .metrics import MetricsLogger
 from .providers import ProviderRegistry
 from .rate_limiter import ProviderGuards
 from .router import RoutePlanner, load_config
-from .types import ChatRequest, chat_response_from_provider
+from .types import ChatRequest, ProviderChatResponse, chat_response_from_provider
 
 app = FastAPI(title="llm-orch")
 
@@ -83,6 +83,8 @@ async def chat_completions(req: Request, body: ChatRequest):
     attempt_count = 0
     last_provider = route.primary
     last_model = body.model
+    success_response: ProviderChatResponse | None = None
+    success_record: dict[str, object] | None = None
     normalized_messages = [{"role": m.role, "content": m.content} for m in body.messages]
     if "temperature" in body.model_fields_set and body.temperature is not None:
         temperature = body.temperature
@@ -114,25 +116,33 @@ async def chat_completions(req: Request, body: ChatRequest):
                     latency_ms = int((time.perf_counter() - start) * 1000)
                     usage_prompt = resp.usage_prompt_tokens or 0
                     usage_completion = resp.usage_completion_tokens or 0
-                    await metrics.write(
-                        {
-                            "req_id": req_id,
-                            "ts": time.time(),
-                            "task": task,
-                            "provider": provider_name,
-                            "model": resp.model or body.model or prov.model,
-                            "latency_ms": latency_ms,
-                            "ok": True,
-                            "status": resp.status_code,
-                            "retries": attempt_count - 1,
-                            "usage_prompt": usage_prompt,
-                            "usage_completion": usage_completion,
-                        }
-                    )
-                    return JSONResponse(chat_response_from_provider(resp))
+                    success_response = resp
+                    last_provider = provider_name
+                    last_model = resp.model or body.model or prov.model
+                    success_record = {
+                        "req_id": req_id,
+                        "ts": time.time(),
+                        "task": task,
+                        "provider": provider_name,
+                        "model": last_model,
+                        "latency_ms": latency_ms,
+                        "ok": True,
+                        "status": resp.status_code,
+                        "retries": attempt_count - 1,
+                        "usage_prompt": usage_prompt,
+                        "usage_completion": usage_completion,
+                    }
+                    break
 
             if attempt < MAX_PROVIDER_ATTEMPTS:
                 await asyncio.sleep(min(0.25 * attempt, 2.0))  # simple backoff
+
+        if success_record is not None:
+            break
+
+    if success_response is not None and success_record is not None:
+        await metrics.write(success_record)
+        return JSONResponse(chat_response_from_provider(success_response))
 
     latency_ms = int((time.perf_counter() - start) * 1000)
     failure_record = {
