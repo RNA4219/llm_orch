@@ -96,24 +96,24 @@ async def chat_completions(req: Request, body: ChatRequest):
                     )
                 except Exception as exc:
                     last_err = str(exc)
-                    await metrics.write(
-                        {
-                            "req_id": req_id,
-                            "ts": time.time(),
-                            "task": task,
-                            "provider": provider_name,
-                            "model": prov.model,
-                            "latency_ms": int((time.perf_counter() - start) * 1000),
-                            "ok": False,
-                            "status": 0,
-                            "error": last_err,
-                            "usage_prompt": 0,
-                            "usage_completion": 0,
-                            "retries": attempt - 1,
-                        }
-                    )
+                    latency_ms = int((time.perf_counter() - start) * 1000)
+                    failure_record = {
+                        "req_id": req_id,
+                        "ts": time.time(),
+                        "task": task,
+                        "provider": provider_name,
+                        "model": prov.model,
+                        "latency_ms": latency_ms,
+                        "ok": False,
+                        "status": 0,
+                        "error": last_err,
+                        "usage_prompt": 0,
+                        "usage_completion": 0,
+                        "retries": attempt - 1,
+                    }
+                    await metrics.write(failure_record)
                 else:
-                    latency = int((time.perf_counter() - start) * 1000)
+                    latency_ms = int((time.perf_counter() - start) * 1000)
                     usage_prompt = resp.usage_prompt_tokens or 0
                     usage_completion = resp.usage_completion_tokens or 0
                     await metrics.write(
@@ -123,7 +123,7 @@ async def chat_completions(req: Request, body: ChatRequest):
                             "task": task,
                             "provider": provider_name,
                             "model": prov.model,
-                            "latency_ms": latency,
+                            "latency_ms": latency_ms,
                             "ok": True,
                             "status": resp.status_code,
                             "retries": attempt - 1,
