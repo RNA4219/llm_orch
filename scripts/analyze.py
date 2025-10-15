@@ -1,4 +1,4 @@
-import json, statistics, pathlib, os, datetime
+import json, statistics, pathlib, os, datetime, math
 from collections import Counter
 
 LOG = pathlib.Path("logs/test.jsonl")
@@ -18,11 +18,23 @@ def load_results():
                 fails.append(obj.get("name"))
     return tests, durs, fails
 
+def compute_p95(durations: list[int]) -> int:
+    if not durations:
+        return 0
+    if len(durations) == 1:
+        return int(durations[0])
+    try:
+        return int(statistics.quantiles(durations, n=20)[18])
+    except statistics.StatisticsError:
+        sorted_durations = sorted(durations)
+        index = min(len(sorted_durations) - 1, math.ceil(0.95 * len(sorted_durations)) - 1)
+        return int(sorted_durations[index])
+
 def main():
     tests, durs, fails = load_results()
     total = len(tests) or 1
     pass_rate = (total - len(fails)) / total
-    p95 = int(statistics.quantiles(durs or [0], n=20)[18]) if durs else 0
+    p95 = compute_p95(durs)
     now = datetime.datetime.utcnow().isoformat()
     REPORT.parent.mkdir(parents=True, exist_ok=True)
     with REPORT.open("w", encoding="utf-8") as f:
