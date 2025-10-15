@@ -10,19 +10,19 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.orch.router import load_config
 
 
-def write_config(tmp_path):
+def write_config(tmp_path, provider_type: str = "mock"):
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     (config_dir / "providers.toml").write_text(
         """
 [alpha]
-type = "mock"
+type = "{provider_type}"
 base_url = "https://example.com"
 model = "gpt"
 auth_env = "TOKEN"
 rpm = 60
 concurrency = 4
-"""
+""".format(provider_type=provider_type)
     )
     (config_dir / "router.yaml").write_text(
         """
@@ -48,3 +48,42 @@ def test_load_config_fails_for_unknown_provider(tmp_path):
         load_config(config_dir)
 
     assert "beta" in str(excinfo.value)
+
+
+def test_provider_registry_fails_for_unknown_type(tmp_path):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "providers.toml").write_text(
+        """
+[alpha]
+type = "unknown"
+base_url = "https://example.com"
+model = "gpt"
+auth_env = "TOKEN"
+rpm = 60
+concurrency = 4
+"""
+    )
+    (config_dir / "router.yaml").write_text(
+        """
+defaults:
+  temperature: 0.1
+  max_tokens: 128
+  task_header: x-orch-task-kind
+routes:
+  task-a:
+    primary: alpha
+    fallback: []
+""",
+        encoding="utf-8",
+    )
+
+    loaded = load_config(str(config_dir))
+
+    from src.orch.providers import ProviderRegistry
+
+    with pytest.raises(ValueError) as excinfo:
+        ProviderRegistry(loaded.providers)
+
+    assert "unknown" in str(excinfo.value)
+    assert "alpha" in str(excinfo.value)
