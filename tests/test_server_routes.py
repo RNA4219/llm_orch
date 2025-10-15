@@ -83,8 +83,15 @@ def assert_single_req_id(records: list[dict[str, object]]) -> None:
     assert req_id
 
 
+@pytest.mark.parametrize(
+    "request_overrides",
+    [
+        {},
+        {"temperature": None, "max_tokens": None},
+    ],
+)
 def test_chat_applies_router_defaults_for_optional_fields(
-    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch, request_overrides: dict[str, Any]
 ) -> None:
     router_file = route_test_config / "router.yaml"
     router_file.write_text(
@@ -123,12 +130,15 @@ routes:
     monkeypatch.setitem(server_module.providers.providers, "dummy", MockProvider())
 
     client = TestClient(app)
+    request_body: dict[str, Any] = {
+        "model": "dummy",
+        "messages": [{"role": "user", "content": "hi"}],
+    }
+    request_body.update(request_overrides)
+
     response = client.post(
         "/v1/chat/completions",
-        json={
-            "model": "dummy",
-            "messages": [{"role": "user", "content": "hi"}],
-        },
+        json=request_body,
     )
 
     assert response.status_code == 200
