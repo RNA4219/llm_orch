@@ -43,6 +43,39 @@ guards = ProviderGuards(cfg.providers)
 planner = RoutePlanner(cfg.router, cfg.providers)
 metrics = MetricsLogger(os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "metrics"))
 
+
+def _http_status_error_details(exc: httpx.HTTPStatusError) -> tuple[int | None, str]:
+    status: int | None = None
+    message: str | None = None
+    response = exc.response
+    if response is not None:
+        status = response.status_code
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = None
+        if isinstance(payload, dict):
+            error_field = payload.get("error")
+            if isinstance(error_field, dict):
+                error_message = error_field.get("message")
+                if isinstance(error_message, str) and error_message:
+                    message = error_message
+            if message is None:
+                nested_message = payload.get("message")
+                if isinstance(nested_message, str) and nested_message:
+                    message = nested_message
+        if message is None:
+            text = response.text
+            if text:
+                message = text
+        if message is None:
+            reason = response.reason_phrase
+            if reason:
+                message = reason
+    if message is None:
+        message = str(exc)
+    return status, message
+
 MAX_PROVIDER_ATTEMPTS = 3
 BAD_GATEWAY_STATUS = 502
 
@@ -119,13 +152,9 @@ async def chat_completions(req: Request, body: ChatRequest):
                     last_provider = provider_name
                     last_model = prov.model or body.model
                     if isinstance(exc, httpx.HTTPStatusError):
-                        status = exc.response.status_code if exc.response is not None else None
-                        if status is not None and status != 429 and status < 500:
-                            abort_error = (
-                                exc.response.text
-                                if exc.response is not None and exc.response.text
-                                else str(exc)
-                            )
+                        status, message = _http_status_error_details(exc)
+                        if status is not None and status != 429 and 400 <= status < 500:
+                            abort_error = message
                             last_err = abort_error
                             abort_status = status
                             should_abort = True
