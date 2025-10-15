@@ -84,9 +84,11 @@ class AnthropicProvider(BaseProvider):
         }
         auth_env = self.defn.auth_env
         if auth_env:
-            key = os.environ.get(auth_env, "")
-            if key:
-                headers["x-api-key"] = key
+            raw_key = os.environ.get(auth_env)
+            if raw_key:
+                key = raw_key.strip()
+                if key:
+                    headers["x-api-key"] = key
         system_messages = [m["content"] for m in messages if m["role"] == "system"]
         mapped: list[dict[str, Any]] = []
         for message in messages:
