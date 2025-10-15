@@ -84,6 +84,44 @@ def assert_single_req_id(records: list[dict[str, object]]) -> None:
     assert req_id
 
 
+def test_chat_rejects_stream_requests(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+    records = capture_metric_records(server_module, monkeypatch)
+
+    provider_chat = AsyncMock()
+
+    class MockProvider:
+        model = "dummy"
+
+        def __init__(self) -> None:
+            self.chat = provider_chat
+
+    monkeypatch.setitem(server_module.providers.providers, "dummy", MockProvider())
+
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "dummy",
+            "messages": [{"role": "user", "content": "hi"}],
+            "stream": True,
+        },
+    )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["error"]["message"] == "streaming responses are not supported"
+    provider_chat.assert_not_awaited()
+    assert records
+    record = records[-1]
+    assert record["ok"] is False
+    assert record["status"] == 400
+    assert record["error"] == "streaming responses are not supported"
+
+
 @pytest.mark.parametrize(
     "request_overrides",
     [
