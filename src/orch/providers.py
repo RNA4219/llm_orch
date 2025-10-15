@@ -170,19 +170,24 @@ class DummyProvider(BaseProvider):
         return ProviderChatResponse(status_code=200, model="dummy", content=f"dummy:{last_user}")
 
 class ProviderRegistry:
+    _PROVIDER_FACTORIES: dict[str, type[BaseProvider]] = {
+        "openai": OpenAICompatProvider,
+        "anthropic": AnthropicProvider,
+        "ollama": OllamaProvider,
+        "dummy": DummyProvider,
+    }
+
     def __init__(self, providers: Dict[str, ProviderDef]):
         self.providers = {}
         for name, d in providers.items():
-            if d.type == "openai":
-                self.providers[name] = OpenAICompatProvider(d)
-            elif d.type == "anthropic":
-                self.providers[name] = AnthropicProvider(d)
-            elif d.type == "ollama":
-                self.providers[name] = OllamaProvider(d)
-            elif d.type == "dummy":
-                self.providers[name] = DummyProvider(d)
-            else:
-                self.providers[name] = OpenAICompatProvider(d)  # default
+            provider_type = d.type or "openai"
+            factory = self._PROVIDER_FACTORIES.get(provider_type)
+            if factory is None:
+                display_type = d.type if d.type else "<missing>"
+                raise ValueError(
+                    f"Unknown provider type '{display_type}' for provider '{name}'"
+                )
+            self.providers[name] = factory(d)
 
     def get(self, name: str) -> BaseProvider:
         return self.providers[name]
