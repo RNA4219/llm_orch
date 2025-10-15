@@ -180,10 +180,22 @@ class ProviderRegistry:
     def __init__(self, providers: Dict[str, ProviderDef]):
         self.providers = {}
         for name, d in providers.items():
-            provider_type = d.type or "openai"
+            provider_type_raw = d.type
+            provider_type = provider_type_raw if provider_type_raw is not None else "openai"
+
+            if isinstance(provider_type_raw, str) and not provider_type_raw.strip():
+                raise ValueError(
+                    f"Unknown provider type '<missing>' for provider '{name}'"
+                )
+
             factory = self._PROVIDER_FACTORIES.get(provider_type)
             if factory is None:
-                display_type = d.type if d.type else "<missing>"
+                display_type: str
+                if isinstance(provider_type_raw, str):
+                    stripped = provider_type_raw.strip()
+                    display_type = stripped if stripped else "<missing>"
+                else:
+                    display_type = provider_type
                 raise ValueError(
                     f"Unknown provider type '{display_type}' for provider '{name}'"
                 )
