@@ -18,8 +18,8 @@ class BaseProvider:
 
 class OpenAICompatProvider(BaseProvider):
     async def chat(self, model: str, messages: List[dict[str, str]], temperature=0.2, max_tokens=2048) -> ProviderChatResponse:
-        base = self.defn.base_url.rstrip("/")
-        parsed = urlparse(base)
+        raw_base = self.defn.base_url.strip()
+        parsed = urlparse(raw_base)
         path = parsed.path or ""
         normalized_path = path.rstrip("/")
         path_segments = [segment for segment in normalized_path.split("/") if segment]
@@ -52,14 +52,21 @@ class OpenAICompatProvider(BaseProvider):
             normalized_segments.append("v1")
         normalized_segments.extend(["chat", "completions"])
         new_path = "/" + "/".join(normalized_segments)
-        url = urlunparse(parsed._replace(path=new_path))
+        rebuilt = parsed._replace(path=new_path)
+        url = urlunparse(rebuilt)
         headers: dict[str, str] = {"Content-Type": "application/json"}
         auth_env = self.defn.auth_env
         if auth_env:
             key = os.environ.get(auth_env, "")
             if key:
                 headers["Authorization"] = f"Bearer {key}"
-        payload = {"model": self.defn.model or model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens, "stream": False}
+        payload = {
+            "model": self.defn.model or model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": False,
+        }
         async with httpx.AsyncClient(timeout=60) as client:
             r = await client.post(url, headers=headers, json=payload)
             r.raise_for_status()
