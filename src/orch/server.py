@@ -98,6 +98,8 @@ async def chat_completions(req: Request, body: ChatRequest):
         max_tokens = cfg.router.defaults.max_tokens
 
     abort_processing = False
+    abort_status: int | None = None
+    abort_error: str | None = None
     for provider_name in [route.primary] + route.fallback:
         prov = providers.get(provider_name)
         guard = guards.get(provider_name)
@@ -119,6 +121,13 @@ async def chat_completions(req: Request, body: ChatRequest):
                     if isinstance(exc, httpx.HTTPStatusError):
                         status = exc.response.status_code if exc.response is not None else None
                         if status is not None and status != 429 and status < 500:
+                            abort_error = (
+                                exc.response.text
+                                if exc.response is not None and exc.response.text
+                                else str(exc)
+                            )
+                            last_err = abort_error
+                            abort_status = status
                             should_abort = True
                 else:
                     latency_ms = int((time.perf_counter() - start) * 1000)
@@ -158,6 +167,10 @@ async def chat_completions(req: Request, body: ChatRequest):
 
     latency_ms = int((time.perf_counter() - start) * 1000)
     failure_status = BAD_GATEWAY_STATUS
+    failure_error = last_err or "all providers failed"
+    if abort_processing and abort_status is not None:
+        failure_status = abort_status
+        failure_error = abort_error or failure_error
     failure_record = {
         "req_id": req_id,
         "ts": time.time(),
@@ -167,12 +180,12 @@ async def chat_completions(req: Request, body: ChatRequest):
         "latency_ms": latency_ms,
         "ok": False,
         "status": failure_status,
-        "error": last_err or "all providers failed",
+        "error": failure_error,
         "usage_prompt": 0,
         "usage_completion": 0,
         "retries": max(attempt_count - 1, 0),
     }
     await metrics.write(failure_record)
     return JSONResponse(
-        {"error": {"message": failure_record["error"]}}, status_code=failure_status
+        {"error": {"message": failure_error}}, status_code=failure_status
     )

@@ -1,4 +1,5 @@
 import os
+import re
 from urllib.parse import urljoin, urlparse
 from typing import Dict, Any, List
 
