@@ -83,6 +83,62 @@ def assert_single_req_id(records: list[dict[str, object]]) -> None:
     assert req_id
 
 
+def test_chat_applies_router_defaults_for_optional_fields(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    router_file = route_test_config / "router.yaml"
+    router_file.write_text(
+        """
+defaults:
+  temperature: 0.55
+  max_tokens: 512
+  task_header: "x-orch-task-kind"
+  task_header_value: "PLAN"
+routes:
+  PLAN:
+    primary: dummy
+""".strip()
+    )
+
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+
+    from src.orch.types import ProviderChatResponse
+
+    provider_response = ProviderChatResponse(
+        status_code=200,
+        model="dummy",
+        content="dummy:hi",
+        usage_prompt_tokens=0,
+        usage_completion_tokens=0,
+    )
+    chat_mock = AsyncMock(return_value=provider_response)
+
+    class MockProvider:
+        model = "dummy"
+
+        def __init__(self) -> None:
+            self.chat = chat_mock
+
+    monkeypatch.setitem(server_module.providers.providers, "dummy", MockProvider())
+
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "dummy",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert chat_mock.await_count == 1
+    args, kwargs = chat_mock.await_args
+    assert args == ("dummy", [{"role": "user", "content": "hi"}])
+    assert kwargs["temperature"] == 0.55
+    assert kwargs["max_tokens"] == 512
+
+
 def test_chat_missing_route_and_default_returns_400(route_test_config: Path) -> None:
     client = TestClient(load_app("1"))
     response = client.post(
