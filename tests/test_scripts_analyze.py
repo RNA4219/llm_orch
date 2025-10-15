@@ -34,6 +34,25 @@ def test_analyze_main_generates_report(tmp_path, monkeypatch):
     assert report_path.exists(), "Report file should be generated"
 
 
+def test_analyze_main_handles_empty_log(tmp_path, monkeypatch):
+    log_path = tmp_path / "logs" / "empty.jsonl"
+    report_path = tmp_path / "reports" / "today.md"
+    issue_path = tmp_path / "reports" / "issue_suggestions.md"
+
+    log_path.parent.mkdir(parents=True)
+    report_path.parent.mkdir(parents=True)
+    log_path.touch()
+
+    monkeypatch.setattr(analyze, "LOG", log_path)
+    monkeypatch.setattr(analyze, "REPORT", report_path)
+    monkeypatch.setattr(analyze, "ISSUE_OUT", issue_path)
+
+    analyze.main()
+
+    report_text = report_path.read_text(encoding="utf-8")
+    assert "- Pass rate: 0.00%" in report_text
+
+
 def test_analyze_main_single_record_p95(tmp_path, monkeypatch):
     log_path = tmp_path / "logs" / "test.jsonl"
     report_path = tmp_path / "reports" / "today.md"
