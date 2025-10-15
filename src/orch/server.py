@@ -43,6 +43,7 @@ planner = RoutePlanner(cfg.router, cfg.providers)
 metrics = MetricsLogger(os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "metrics"))
 
 MAX_PROVIDER_ATTEMPTS = 3
+BAD_GATEWAY_STATUS = 502
 
 @app.get("/healthz")
 async def healthz():
@@ -153,11 +154,13 @@ async def chat_completions(req: Request, body: ChatRequest):
         "model": last_model,
         "latency_ms": latency_ms,
         "ok": False,
-        "status": 0,
+        "status": BAD_GATEWAY_STATUS,
         "error": last_err or "all providers failed",
         "usage_prompt": 0,
         "usage_completion": 0,
         "retries": max(attempt_count - 1, 0),
     }
     await metrics.write(failure_record)
-    return JSONResponse({"error": {"message": failure_record["error"]}}, status_code=502)
+    return JSONResponse(
+        {"error": {"message": failure_record["error"]}}, status_code=BAD_GATEWAY_STATUS
+    )

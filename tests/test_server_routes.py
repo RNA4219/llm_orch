@@ -633,6 +633,42 @@ def test_chat_metrics_provider_error_usage_zero(
         assert record["usage_completion"] == 0
 
 
+def test_chat_metrics_provider_error_records_status_502(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+    records = capture_metric_records(server_module, monkeypatch)
+
+    async def no_sleep(_: float) -> None:
+        return None
+
+    class BoomProvider:
+        model = "dummy"
+
+        async def chat(self, *args: object, **kwargs: object) -> object:
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(server_module.asyncio, "sleep", no_sleep)
+    monkeypatch.setitem(server_module.providers.providers, "dummy", BoomProvider())
+    monkeypatch.setattr(server_module, "MAX_PROVIDER_ATTEMPTS", 1)
+
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "dummy",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+
+    assert response.status_code == 502
+    assert records
+    failure_record = records[-1]
+    assert failure_record["ok"] is False
+    assert failure_record["status"] == 502
+
+
 def test_chat_metrics_retry_success_single_record(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
