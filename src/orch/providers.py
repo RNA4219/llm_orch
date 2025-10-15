@@ -39,9 +39,14 @@ class OpenAICompatProvider(BaseProvider):
             data = r.json()
         content = data["choices"][0]["message"]["content"]
         usage = data.get("usage") or {}
-        return ProviderChatResponse(status_code=r.status_code, model=data.get("model", self.defn.model), content=content,
-                                    usage_prompt_tokens=usage.get("prompt_tokens", 0),
-                                    usage_completion_tokens=usage.get("completion_tokens", 0))
+        response_model = data.get("model") or self.defn.model or model
+        return ProviderChatResponse(
+            status_code=r.status_code,
+            model=response_model,
+            content=content,
+            usage_prompt_tokens=usage.get("prompt_tokens", 0),
+            usage_completion_tokens=usage.get("completion_tokens", 0),
+        )
 
 class AnthropicProvider(BaseProvider):
     async def chat(self, model: str, messages: List[dict[str, str]], temperature=0.2, max_tokens=2048) -> ProviderChatResponse:
@@ -78,9 +83,14 @@ class AnthropicProvider(BaseProvider):
             if isinstance(block, dict) and block.get("type") == "text"
         )
         usage = data.get("usage") or {}
-        return ProviderChatResponse(status_code=r.status_code, model=data.get("model", self.defn.model), content=content,
-                                    usage_prompt_tokens=usage.get("input_tokens", 0),
-                                    usage_completion_tokens=usage.get("output_tokens", 0))
+        response_model = data.get("model") or self.defn.model or model
+        return ProviderChatResponse(
+            status_code=r.status_code,
+            model=response_model,
+            content=content,
+            usage_prompt_tokens=usage.get("input_tokens", 0),
+            usage_completion_tokens=usage.get("output_tokens", 0),
+        )
 
 class OllamaProvider(BaseProvider):
     async def chat(self, model: str, messages: List[dict[str, str]], temperature=0.2, max_tokens=2048) -> ProviderChatResponse:
