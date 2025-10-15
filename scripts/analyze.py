@@ -1,4 +1,5 @@
-import json, statistics, pathlib, os, datetime
+import json, statistics, pathlib, os, datetime, math
+from typing import Sequence
 from collections import Counter
 
 LOG = pathlib.Path("logs/test.jsonl")
@@ -18,11 +19,22 @@ def load_results():
                 fails.append(obj.get("name"))
     return tests, durs, fails
 
+def calculate_p95(durs: Sequence[float]) -> int:
+    if not durs:
+        return 0
+    try:
+        method = "inclusive" if len(durs) < 20 else "exclusive"
+        return int(statistics.quantiles(durs, n=20, method=method)[18])
+    except statistics.StatisticsError:
+        sorted_durs = sorted(durs)
+        idx = max(0, min(len(sorted_durs) - 1, math.ceil(0.95 * len(sorted_durs)) - 1))
+        return int(sorted_durs[idx])
+
 def main():
     tests, durs, fails = load_results()
     total = len(tests) or 1
     pass_rate = (total - len(fails)) / total
-    p95 = int(statistics.quantiles(durs or [0], n=20)[18]) if durs else 0
+    p95 = calculate_p95(durs)
     now = datetime.datetime.utcnow().isoformat()
     REPORT.parent.mkdir(parents=True, exist_ok=True)
     with REPORT.open("w", encoding="utf-8") as f:
