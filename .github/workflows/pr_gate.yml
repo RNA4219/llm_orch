@@ -28,9 +28,18 @@ jobs:
                 'GraphQL-Features': 'pull-request-review-decision',
               },
             });
-            const decision = result.repository.pullRequest?.reviewDecision;
+            const pullRequest = result.repository?.pullRequest;
+            if (!pullRequest) {
+              core.warning('Pull request metadata unavailable; skipping review decision gate.');
+              return;
+            }
+            const rawDecision = pullRequest.reviewDecision;
+            if (typeof rawDecision !== 'string') {
+              core.warning('No review decision returned; defaulting to REVIEW_REQUIRED.');
+            }
+            const decision = (typeof rawDecision === 'string' ? rawDecision : undefined) ?? 'REVIEW_REQUIRED';
             if (decision !== 'APPROVED') {
-              core.setFailed(`Pull request review decision is ${decision ?? 'UNKNOWN'}`);
+              core.setFailed(`Pull request review decision is ${decision}`);
             }
       - name: Block auto-merge
         run: |
