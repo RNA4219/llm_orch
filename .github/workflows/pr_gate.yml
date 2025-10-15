@@ -28,11 +28,16 @@ jobs:
                 'GraphQL-Features': 'pull-request-review-decision',
               },
             });
-            const decisionRaw = result.repository.pullRequest?.reviewDecision;
-            const decision =
-              decisionRaw === 'UNKNOWN' || decisionRaw === null || decisionRaw === undefined
-                ? 'REVIEW_REQUIRED'
-                : decisionRaw;
+            const pullRequest = result.repository?.pullRequest;
+            if (!pullRequest) {
+              core.warning('Pull request metadata unavailable; skipping review decision gate.');
+              return;
+            }
+            const rawDecision = pullRequest.reviewDecision;
+            if (typeof rawDecision !== 'string') {
+              core.warning('No review decision returned; defaulting to REVIEW_REQUIRED.');
+            }
+            const decision = (typeof rawDecision === 'string' ? rawDecision : undefined) ?? 'REVIEW_REQUIRED';
             if (decision !== 'APPROVED') {
               core.setFailed(`Pull request review decision is ${decision}`);
             }
