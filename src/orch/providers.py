@@ -30,8 +30,12 @@ class OpenAICompatProvider(BaseProvider):
             base_for_join = f"{base}/v1"
 
         url = urljoin(f"{base_for_join.rstrip('/')}/", "chat/completions")
-        key = os.environ.get(self.defn.auth_env or "", "")
-        headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        auth_env = self.defn.auth_env
+        if auth_env:
+            key = os.environ.get(auth_env, "")
+            if key:
+                headers["Authorization"] = f"Bearer {key}"
         payload = {"model": self.defn.model or model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens, "stream": False}
         async with httpx.AsyncClient(timeout=60) as client:
             r = await client.post(url, headers=headers, json=payload)

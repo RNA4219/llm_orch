@@ -64,6 +64,28 @@ def make_provider(base_url: str, defn_model: str = "gpt-4o") -> OpenAICompatProv
     return OpenAICompatProvider(provider_def)
 
 
+def test_no_authorization_header_when_auth_env_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    provider = OpenAICompatProvider(
+        ProviderDef(
+            name="openai-no-auth",
+            type="openai",
+            base_url="https://api.openai.com",
+            model="gpt-4o",
+            auth_env=None,
+            rpm=60,
+            concurrency=1,
+        )
+    )
+
+    post_calls, _ = run_chat(provider, monkeypatch)
+
+    assert post_calls
+    assert "Authorization" not in post_calls[0]["headers"]
+
+
 def test_openai_base_url_uses_chat_completions(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "secret")
     provider = make_provider("https://api.openai.com")
