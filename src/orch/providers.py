@@ -182,7 +182,7 @@ class ProviderRegistry:
             elif d.type == "dummy":
                 self.providers[name] = DummyProvider(d)
             else:
-                self.providers[name] = OpenAICompatProvider(d)  # default
+                raise ValueError(f"Unknown provider type '{d.type}' for provider '{name}'")
 
     def get(self, name: str) -> BaseProvider:
         return self.providers[name]
