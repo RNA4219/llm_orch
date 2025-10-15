@@ -790,13 +790,14 @@ def test_chat_metrics_does_not_retry_on_http_client_error(
     )
 
     assert response_obj.status_code == 400
-    assert response_obj.json()["error"]["message"] == "bad request"
+    body = response_obj.json()
+    assert body["error"]["message"] == "bad request"
     assert chat_mock.await_count == 1
     assert records
     failure_record = records[-1]
     assert failure_record["retries"] == 0
-    assert failure_record["status"] == 400
-    assert failure_record["error"] == "bad request"
+    assert failure_record["status"] == response_obj.status_code
+    assert failure_record["error"] == body["error"]["message"]
 
 
 def test_chat_metrics_transient_provider_error_usage_zero(
