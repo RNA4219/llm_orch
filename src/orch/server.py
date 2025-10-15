@@ -105,6 +105,8 @@ async def chat_completions(req: Request, body: ChatRequest):
                             "ok": False,
                             "status": 0,
                             "error": last_err,
+                            "usage_prompt": 0,
+                            "usage_completion": 0,
                             "retries": attempt - 1,
                         }
                     )
