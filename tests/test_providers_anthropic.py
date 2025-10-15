@@ -34,6 +34,7 @@ def run_chat(
             return None
 
         async def post(self, url: str, headers: dict[str, str], json: dict[str, Any]) -> httpx.Response:
+            captured["call_count"] = captured.get("call_count", 0) + 1
             captured["url"] = url
             captured["headers"] = headers
             captured["json"] = json
