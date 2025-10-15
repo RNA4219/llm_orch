@@ -166,6 +166,7 @@ def test_anthropic_chat_base_url_handles_version_suffix(
 
     captured, _ = run_chat(provider, monkeypatch, messages)
 
+    assert captured["call_count"] == 1
     assert captured["url"] == expected
 
 def test_anthropic_chat_omits_api_key_when_no_env_set(monkeypatch: pytest.MonkeyPatch) -> None:

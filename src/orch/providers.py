@@ -1,6 +1,6 @@
 import os
 import re
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, urlunparse
 from typing import Dict, Any, List
 
 import httpx
@@ -76,7 +76,8 @@ class AnthropicProvider(BaseProvider):
     async def chat(self, model: str, messages: List[dict[str, str]], temperature=0.2, max_tokens=2048) -> ProviderChatResponse:
         base = self.defn.base_url.strip()
         parsed = urlparse(base)
-        path_segments = [segment for segment in parsed.path.split("/") if segment]
+        path = parsed.path or ""
+        path_segments = [segment for segment in path.split("/") if segment]
 
         def is_version_segment(segment: str) -> bool:
             if not segment:
@@ -87,19 +88,19 @@ class AnthropicProvider(BaseProvider):
             suffix = lowered[1:]
             return bool(suffix) and suffix[0].isdigit()
 
-        has_version_segment = any(is_version_segment(segment) for segment in path_segments)
-        ends_with_messages = bool(path_segments) and path_segments[-1].lower() == "messages"
-
         normalized_segments = list(path_segments)
-        if not ends_with_messages:
-            if not has_version_segment:
-                normalized_segments.append("v1")
-            normalized_segments.append("messages")
-        if not normalized_segments:
+        has_version_segment = any(is_version_segment(segment) for segment in normalized_segments)
+
+        if normalized_segments:
+            if normalized_segments[-1].lower() != "messages":
+                if not has_version_segment:
+                    normalized_segments.append("v1")
+                normalized_segments.append("messages")
+        else:
             normalized_segments = ["v1", "messages"]
 
         normalized_path = "/" + "/".join(normalized_segments)
-        url = parsed._replace(path=normalized_path).geturl()
+        url = urlunparse(parsed._replace(path=normalized_path))
         headers: dict[str, str] = {
             "anthropic-version": "2023-06-01",
             "Content-Type": "application/json",
