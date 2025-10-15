@@ -365,6 +365,60 @@ def test_chat_metrics_provider_error_usage_zero(
         assert record["usage_completion"] == 0
 
 
+def test_chat_metrics_transient_provider_error_usage_zero(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+    records = capture_metric_records(server_module, monkeypatch)
+
+    async def no_sleep(_: float) -> None:
+        return None
+
+    from src.orch.types import ProviderChatResponse
+
+    success_response = ProviderChatResponse(
+        status_code=200,
+        model="dummy",
+        content="dummy:hi",
+        usage_prompt_tokens=5,
+        usage_completion_tokens=7,
+    )
+
+    chat_mock = AsyncMock(side_effect=[RuntimeError("boom"), success_response])
+
+    class MockProvider:
+        model = "dummy"
+
+        def __init__(self) -> None:
+            self.chat = chat_mock
+
+    monkeypatch.setattr(server_module.asyncio, "sleep", no_sleep)
+    monkeypatch.setitem(server_module.providers.providers, "dummy", MockProvider())
+
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "dummy",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+
+    assert response.status_code == 200
+    failure_records = [record for record in records if record.get("ok") is False]
+    assert failure_records
+    failure_record = failure_records[0]
+    assert failure_record["usage_prompt"] == 0
+    assert failure_record["usage_completion"] == 0
+
+    success_records = [record for record in records if record.get("ok") is True]
+    assert success_records
+    success_record = success_records[0]
+    assert success_record["usage_prompt"] == 5
+    assert success_record["usage_completion"] == 7
+
+
 def test_chat_retries_success_after_transient_failures(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
