@@ -137,3 +137,24 @@ def test_anthropic_chat_omits_api_key_when_no_auth_env(monkeypatch: pytest.Monke
 
     request_headers = cast(dict[str, str], captured["headers"])
     assert "x-api-key" not in request_headers
+
+
+def test_anthropic_chat_respects_versioned_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider_def = ProviderDef(
+        name="anthropic",
+        type="anthropic",
+        base_url="https://api.anthropic.com/v1",
+        model="claude-3-sonnet",
+        auth_env="ANTHROPIC_API_KEY",
+        rpm=60,
+        concurrency=1,
+    )
+    provider = AnthropicProvider(provider_def)
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "secret")
+
+    messages = [{"role": "user", "content": "hello"}]
+
+    captured, _ = run_chat(provider, monkeypatch, messages)
+
+    assert captured["url"] == "https://api.anthropic.com/v1/messages"
