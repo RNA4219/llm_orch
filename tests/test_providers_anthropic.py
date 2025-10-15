@@ -34,6 +34,7 @@ def run_chat(
             return None
 
         async def post(self, url: str, headers: dict[str, str], json: dict[str, Any]) -> httpx.Response:
+            captured["call_count"] = captured.get("call_count", 0) + 1
             captured["url"] = url
             captured["headers"] = headers
             captured["json"] = json
@@ -116,3 +117,25 @@ def test_anthropic_chat_response_uses_requested_model_when_missing(monkeypatch: 
     )
 
     assert response.model == "claude-3-5-haiku"
+
+
+def test_anthropic_base_url_with_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider_def = ProviderDef(
+        name="anthropic",
+        type="anthropic",
+        base_url="https://api.anthropic.com/v1",
+        model="claude-3-sonnet",
+        auth_env="ANTHROPIC_API_KEY",
+        rpm=60,
+        concurrency=1,
+    )
+    provider = AnthropicProvider(provider_def)
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "secret")
+
+    messages = [{"role": "user", "content": "hello"}]
+
+    captured, _ = run_chat(provider, monkeypatch, messages)
+
+    assert captured["url"] == "https://api.anthropic.com/v1/messages"
+    assert captured["call_count"] == 1
