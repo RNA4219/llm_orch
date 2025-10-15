@@ -73,7 +73,32 @@ class OpenAICompatProvider(BaseProvider):
 
 class AnthropicProvider(BaseProvider):
     async def chat(self, model: str, messages: List[dict[str, str]], temperature=0.2, max_tokens=2048) -> ProviderChatResponse:
-        url = f"{self.defn.base_url.rstrip('/')}/v1/messages"
+        base = self.defn.base_url.strip()
+        parsed = urlparse(base)
+        path_segments = [segment for segment in parsed.path.split("/") if segment]
+
+        def is_version_segment(segment: str) -> bool:
+            if not segment:
+                return False
+            lowered = segment.lower()
+            if not lowered.startswith("v"):
+                return False
+            suffix = lowered[1:]
+            return bool(suffix) and suffix[0].isdigit()
+
+        has_version_segment = any(is_version_segment(segment) for segment in path_segments)
+        ends_with_messages = bool(path_segments) and path_segments[-1].lower() == "messages"
+
+        normalized_segments = list(path_segments)
+        if not ends_with_messages:
+            if not has_version_segment:
+                normalized_segments.append("v1")
+            normalized_segments.append("messages")
+        if not normalized_segments:
+            normalized_segments = ["v1", "messages"]
+
+        normalized_path = "/" + "/".join(normalized_segments)
+        url = parsed._replace(path=normalized_path).geturl()
         headers: dict[str, str] = {
             "anthropic-version": "2023-06-01",
             "Content-Type": "application/json",
