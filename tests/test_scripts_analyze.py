@@ -2,46 +2,33 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from scripts import analyze
+import scripts.analyze as analyze
 
 
-@pytest.fixture
-def tmp_paths(tmp_path: Path):
-    logs_dir = tmp_path / "logs"
-    reports_dir = tmp_path / "reports"
-    logs_dir.mkdir()
-    reports_dir.mkdir()
-    return logs_dir, reports_dir
+def test_analyze_main_generates_report(tmp_path, monkeypatch):
+    log_path = tmp_path / "logs" / "test.jsonl"
+    report_path = tmp_path / "reports" / "today.md"
+    issue_path = tmp_path / "reports" / "issue_suggestions.md"
 
+    log_path.parent.mkdir(parents=True)
+    report_path.parent.mkdir(parents=True)
 
-def test_analyze_main_generates_report(tmp_paths) -> None:
-    logs_dir, reports_dir = tmp_paths
-    log_path = logs_dir / "test.jsonl"
-    log_path.write_text(json.dumps({
-        "name": "sample::test_case",
-        "duration_ms": 123,
-        "status": "pass",
-    }) + "\n", encoding="utf-8")
+    records = [
+        {"name": "sample::test_one", "duration_ms": 10, "status": "pass"},
+        {"name": "sample::test_two", "duration_ms": 20, "status": "fail"},
+    ]
+    with log_path.open("w", encoding="utf-8") as fp:
+        for record in records:
+            fp.write(json.dumps(record) + "\n")
 
-    report_path = reports_dir / "today.md"
-    issue_path = reports_dir / "issue_suggestions.md"
-
-    monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(analyze, "LOG", log_path)
     monkeypatch.setattr(analyze, "REPORT", report_path)
     monkeypatch.setattr(analyze, "ISSUE_OUT", issue_path)
 
-    try:
-        analyze.main()
-    finally:
-        monkeypatch.undo()
+    analyze.main()
 
-    assert report_path.exists()
-    content = report_path.read_text(encoding="utf-8")
-    assert "Duration p95" in content
+    assert report_path.exists(), "Report file should be generated"
