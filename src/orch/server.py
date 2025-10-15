@@ -81,16 +81,14 @@ async def chat_completions(req: Request, body: ChatRequest):
     usage_prompt = 0
     usage_completion = 0
     normalized_messages = [{"role": m.role, "content": m.content} for m in body.messages]
-    temperature = (
-        body.temperature
-        if "temperature" in body.model_fields_set
-        else cfg.router.defaults.temperature
-    )
-    max_tokens = (
-        body.max_tokens
-        if "max_tokens" in body.model_fields_set
-        else cfg.router.defaults.max_tokens
-    )
+    if "temperature" in body.model_fields_set and body.temperature is not None:
+        temperature = body.temperature
+    else:
+        temperature = cfg.router.defaults.temperature
+    if "max_tokens" in body.model_fields_set and body.max_tokens is not None:
+        max_tokens = body.max_tokens
+    else:
+        max_tokens = cfg.router.defaults.max_tokens
 
     for provider_name in [route.primary] + route.fallback:
         prov = providers.get(provider_name)
