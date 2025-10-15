@@ -274,6 +274,30 @@ def test_chat_metrics_routing_error_includes_req_id(
     assert_single_req_id(records)
 
 
+def test_chat_metrics_routing_error_usage_zero(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+    records = capture_metric_records(server_module, monkeypatch)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"x-orch-task-kind": "UNKNOWN"},
+        json={
+            "model": "dummy",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+
+    assert response.status_code == 400
+    assert records
+    record = records[-1]
+    assert record["usage_prompt"] == 0
+    assert record["usage_completion"] == 0
+
+
 def test_chat_metrics_provider_error_includes_req_id(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -303,6 +327,41 @@ def test_chat_metrics_provider_error_includes_req_id(
 
     assert response.status_code == 502
     assert_single_req_id(records)
+
+
+def test_chat_metrics_provider_error_usage_zero(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+    records = capture_metric_records(server_module, monkeypatch)
+
+    async def no_sleep(_: float) -> None:
+        return None
+
+    class BoomProvider:
+        model = "dummy"
+
+        async def chat(self, *args: object, **kwargs: object) -> object:
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(server_module.asyncio, "sleep", no_sleep)
+    monkeypatch.setitem(server_module.providers.providers, "dummy", BoomProvider())
+
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "dummy",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+
+    assert response.status_code == 502
+    assert records
+    for record in records:
+        assert record["usage_prompt"] == 0
+        assert record["usage_completion"] == 0
 
 
 def test_chat_retries_success_after_transient_failures(
