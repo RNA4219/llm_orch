@@ -116,3 +116,23 @@ def test_anthropic_chat_response_uses_requested_model_when_missing(monkeypatch: 
     )
 
     assert response.model == "claude-3-5-haiku"
+
+
+def test_anthropic_chat_omits_api_key_when_no_auth_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider_def = ProviderDef(
+        name="anthropic",
+        type="anthropic",
+        base_url="https://api.anthropic.com",
+        model="claude-3-sonnet",
+        auth_env=None,
+        rpm=60,
+        concurrency=1,
+    )
+    provider = AnthropicProvider(provider_def)
+
+    messages = [{"role": "user", "content": "hello"}]
+
+    captured, _ = run_chat(provider, monkeypatch, messages)
+
+    request_headers = cast(dict[str, str], captured["headers"])
+    assert "x-api-key" not in request_headers

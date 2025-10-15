@@ -74,8 +74,15 @@ class OpenAICompatProvider(BaseProvider):
 class AnthropicProvider(BaseProvider):
     async def chat(self, model: str, messages: List[dict[str, str]], temperature=0.2, max_tokens=2048) -> ProviderChatResponse:
         url = f"{self.defn.base_url.rstrip('/')}/v1/messages"
-        key = os.environ.get(self.defn.auth_env or "", "")
-        headers = {"x-api-key": key, "anthropic-version": "2023-06-01", "Content-Type": "application/json"}
+        headers: dict[str, str] = {
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        }
+        auth_env = self.defn.auth_env
+        if auth_env:
+            key = os.environ.get(auth_env, "")
+            if key:
+                headers["x-api-key"] = key
         system_messages = [m["content"] for m in messages if m["role"] == "system"]
         mapped: list[dict[str, Any]] = []
         for message in messages:
