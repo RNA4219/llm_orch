@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -756,6 +757,43 @@ def test_chat_metrics_retry_success_single_record(
     assert record["ok"] is True
     assert record["retries"] == 1
     assert isinstance(record["req_id"], str)
+
+
+def test_chat_metrics_does_not_retry_on_http_client_error(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+    records = capture_metric_records(server_module, monkeypatch)
+
+    request = httpx.Request("POST", "https://example.invalid")
+    response = httpx.Response(status_code=400, request=request)
+    chat_mock = AsyncMock(
+        side_effect=httpx.HTTPStatusError("bad request", request=request, response=response)
+    )
+
+    class MockProvider:
+        model = "dummy"
+
+        def __init__(self) -> None:
+            self.chat = chat_mock
+
+    monkeypatch.setitem(server_module.providers.providers, "dummy", MockProvider())
+
+    client = TestClient(app)
+    response_obj = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "dummy",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+
+    assert response_obj.status_code == 502
+    assert chat_mock.await_count == 1
+    assert records
+    failure_record = records[-1]
+    assert failure_record["retries"] == 0
 
 
 def test_chat_metrics_transient_provider_error_usage_zero(

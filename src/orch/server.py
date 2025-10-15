@@ -3,6 +3,7 @@ import os
 import time
 import uuid
 
+import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
@@ -96,12 +97,14 @@ async def chat_completions(req: Request, body: ChatRequest):
     else:
         max_tokens = cfg.router.defaults.max_tokens
 
+    abort_processing = False
     for provider_name in [route.primary] + route.fallback:
         prov = providers.get(provider_name)
         guard = guards.get(provider_name)
         for attempt in range(1, MAX_PROVIDER_ATTEMPTS + 1):
             async with guard:
                 attempt_count += 1
+                should_abort = False
                 try:
                     resp = await prov.chat(
                         body.model,
@@ -113,6 +116,10 @@ async def chat_completions(req: Request, body: ChatRequest):
                     last_err = str(exc)
                     last_provider = provider_name
                     last_model = prov.model or body.model
+                    if isinstance(exc, httpx.HTTPStatusError):
+                        status = exc.response.status_code if exc.response is not None else None
+                        if status is not None and status != 429 and status < 500:
+                            should_abort = True
                 else:
                     latency_ms = int((time.perf_counter() - start) * 1000)
                     usage_prompt = resp.usage_prompt_tokens or 0
@@ -135,10 +142,14 @@ async def chat_completions(req: Request, body: ChatRequest):
                     }
                     break
 
+            if should_abort:
+                abort_processing = True
+                break
+
             if attempt < MAX_PROVIDER_ATTEMPTS:
                 await asyncio.sleep(min(0.25 * attempt, 2.0))  # simple backoff
 
-        if success_record is not None:
+        if success_record is not None or abort_processing:
             break
 
     if success_response is not None and success_record is not None:
