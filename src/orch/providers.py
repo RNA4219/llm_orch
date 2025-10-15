@@ -22,12 +22,20 @@ class OpenAICompatProvider(BaseProvider):
         path = parsed.path or ""
         normalized_path = path.rstrip("/")
 
+        should_append_v1 = True
+
         if "/openai/" in path and not normalized_path.endswith("/openai"):
-            base_for_join = base
-        elif normalized_path.endswith("/v1"):
-            base_for_join = base
+            should_append_v1 = False
+        elif not normalized_path:
+            hostname = (parsed.netloc or "").lower()
+            if not hostname.endswith("openai.com"):
+                should_append_v1 = False
         else:
-            base_for_join = f"{base}/v1"
+            last_segment = normalized_path.rsplit("/", 1)[-1]
+            if last_segment.startswith("v") or normalized_path.endswith("/v1"):
+                should_append_v1 = False
+
+        base_for_join = f"{base}/v1" if should_append_v1 else base
 
         url = urljoin(f"{base_for_join.rstrip('/')}/", "chat/completions")
         key = os.environ.get(self.defn.auth_env or "", "")
