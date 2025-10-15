@@ -39,7 +39,7 @@ jobs:
               return;
             }
             if (decision !== 'APPROVED') {
-              core.setFailed(`Pull request review decision is ${decision ?? 'UNKNOWN'}`);
+              core.setFailed(`Pull request review decision is ${decision}`);
             }
       - name: Block auto-merge
         run: |
