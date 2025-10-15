@@ -11,19 +11,19 @@ from src.orch.router import load_config
 from src.orch.providers import ProviderRegistry
 
 
-def write_config(tmp_path):
+def write_config(tmp_path, provider_type: str = "mock"):
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     (config_dir / "providers.toml").write_text(
         """
 [alpha]
-type = "mock"
+type = "{provider_type}"
 base_url = "https://example.com"
 model = "gpt"
 auth_env = "TOKEN"
 rpm = 60
 concurrency = 4
-"""
+""".format(provider_type=provider_type)
     )
     (config_dir / "router.yaml").write_text(
         """

@@ -93,6 +93,25 @@ async def chat_completions(req: Request, body: ChatRequest):
     task = header_value or cfg.router.defaults.task_header_value or "DEFAULT"
     start = time.perf_counter()
     req_id = str(uuid.uuid4())
+    if body.stream:
+        reason = "streaming responses are not supported"
+        await metrics.write(
+            {
+                "req_id": req_id,
+                "ts": time.time(),
+                "task": task,
+                "provider": "unsupported",
+                "model": body.model,
+                "latency_ms": int((time.perf_counter() - start) * 1000),
+                "ok": False,
+                "status": 400,
+                "error": reason,
+                "usage_prompt": 0,
+                "usage_completion": 0,
+                "retries": 0,
+            }
+        )
+        return JSONResponse({"error": {"message": reason}}, status_code=400)
     try:
         route = planner.plan(task)
     except ValueError as exc:
