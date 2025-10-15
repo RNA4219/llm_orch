@@ -2,7 +2,11 @@ import os
 from dataclasses import dataclass
 from typing import Dict
 
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - exercised via tests
+    import tomli as tomllib
+
 import yaml
 
 @dataclass
