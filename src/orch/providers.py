@@ -1,6 +1,6 @@
 import os
 import re
-from urllib.parse import urljoin, urlparse, urlunparse
+from urllib.parse import urlparse, urlunparse
 from typing import Dict, Any, List
 
 import httpx
@@ -47,9 +47,12 @@ class OpenAICompatProvider(BaseProvider):
         elif path_segments and is_version_segment(path_segments[-1]):
             should_append_v1 = False
 
-        base_for_join = f"{base}/v1" if should_append_v1 else base
-
-        url = urljoin(f"{base_for_join.rstrip('/')}/", "chat/completions")
+        normalized_segments = list(path_segments)
+        if should_append_v1:
+            normalized_segments.append("v1")
+        normalized_segments.extend(["chat", "completions"])
+        new_path = "/" + "/".join(normalized_segments)
+        url = urlunparse(parsed._replace(path=new_path))
         headers: dict[str, str] = {"Content-Type": "application/json"}
         auth_env = self.defn.auth_env
         if auth_env:
