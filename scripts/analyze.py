@@ -70,5 +70,8 @@ def main():
             f.write("### 反省TODO\n")
             for name in set(fails):
                 f.write(f"- [ ] {name} の再現手順/前提/境界値を追加\n")
+    else:
+        if ISSUE_OUT.exists() and (ISSUE_OUT.is_file() or ISSUE_OUT.is_symlink()):
+            ISSUE_OUT.unlink()
 if __name__ == "__main__":
     main()
