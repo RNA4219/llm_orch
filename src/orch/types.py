@@ -1,9 +1,9 @@
-from typing import List, Optional, Literal, Any
+from typing import Any, Dict, List, Literal, Optional, Union
 from pydantic import BaseModel, Field
 
 class ChatMessage(BaseModel):
-    role: Literal["system", "user", "assistant"]
-    content: str
+    role: Literal["system", "user", "assistant", "tool"]
+    content: Union[str, List[Dict[str, Any]], None]
 
 class ChatRequest(BaseModel):
     model: str
