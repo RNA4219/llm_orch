@@ -257,13 +257,49 @@ class AnthropicProvider(BaseProvider):
             r.raise_for_status()
             data = r.json()
         content_blocks = data.get("content") or []
-        content = "".join(
-            block.get("text", "")
-            for block in content_blocks
-            if isinstance(block, dict) and block.get("type") == "text"
-        )
-        finish_reason = data.get("stop_reason")
-        tool_calls = data.get("tool_calls")
+        text_parts: list[str] = []
+        tool_calls: list[dict[str, Any]] = []
+
+        for block in content_blocks:
+            if not isinstance(block, dict):
+                continue
+            block_type = block.get("type")
+            if block_type == "text":
+                text_value = block.get("text")
+                if isinstance(text_value, str):
+                    text_parts.append(text_value)
+            elif block_type == "tool_use":
+                identifier = block.get("id")
+                if not isinstance(identifier, str) or not identifier:
+                    raise ValueError("Anthropic tool_use blocks require a non-empty string 'id'.")
+                name = block.get("name")
+                if not isinstance(name, str) or not name:
+                    raise ValueError("Anthropic tool_use blocks require a non-empty string 'name'.")
+                raw_input = block.get("input")
+                if raw_input is None:
+                    input_payload: dict[str, Any] = {}
+                elif isinstance(raw_input, dict):
+                    input_payload = raw_input
+                else:
+                    raise ValueError("Anthropic tool_use blocks must provide dict 'input' payloads.")
+                tool_calls.append(
+                    {
+                        "id": identifier,
+                        "type": "function",
+                        "function": {
+                            "name": name,
+                            "arguments": json.dumps(input_payload),
+                        },
+                    }
+                )
+            elif block_type == "tool_result":
+                result_content = block.get("content")
+                text_parts.append(normalize_text_content(result_content))
+
+        content = "".join(text_parts)
+        finish_reason_raw = data.get("stop_reason")
+        finish_reason = "tool_calls" if finish_reason_raw == "tool_use" else finish_reason_raw
+        normalized_tool_calls = tool_calls or None
         usage = data.get("usage") or {}
         response_model = data.get("model") or self.defn.model or model
         return ProviderChatResponse(
@@ -271,7 +307,7 @@ class AnthropicProvider(BaseProvider):
             model=response_model,
             content=content,
             finish_reason=finish_reason,
-            tool_calls=tool_calls if isinstance(tool_calls, list) else None,
+            tool_calls=normalized_tool_calls,
             usage_prompt_tokens=usage.get("input_tokens", 0),
             usage_completion_tokens=usage.get("output_tokens", 0),
         )

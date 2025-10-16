@@ -12,7 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.orch.providers import AnthropicProvider
 from src.orch.router import ProviderDef
-from src.orch.types import ProviderChatResponse
+from src.orch.types import ProviderChatResponse, chat_response_from_provider
 
 
 def run_chat(
@@ -20,6 +20,7 @@ def run_chat(
     monkeypatch: pytest.MonkeyPatch,
     messages: list[dict[str, Any]],
     request_model: str = "claude-3-sonnet",
+    response_payload: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], ProviderChatResponse]:
     captured: dict[str, Any] = {}
 
@@ -41,7 +42,9 @@ def run_chat(
             request = httpx.Request("POST", url, headers=headers)
             return httpx.Response(
                 status_code=200,
-                json={
+                json=
+                response_payload
+                or {
                     "content": [{"type": "text", "text": "ok"}],
                     "usage": {"input_tokens": 1, "output_tokens": 2},
                 },
@@ -367,3 +370,46 @@ def test_anthropic_payload_errors_on_tool_without_id(monkeypatch: pytest.MonkeyP
 
     with pytest.raises(ValueError, match="tool_call_id"):
         run_chat(provider, monkeypatch, messages)
+
+
+def test_anthropic_chat_maps_tool_use_stop_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = build_anthropic_provider(monkeypatch)
+
+    messages = [{"role": "user", "content": "hello"}]
+    response_payload = {
+        "content": [
+            {
+                "type": "tool_use",
+                "id": "call_42",
+                "name": "get_weather",
+                "input": {"location": "Tokyo"},
+            },
+            {"type": "text", "text": "Working on it."},
+        ],
+        "stop_reason": "tool_use",
+        "model": "claude-3-sonnet",
+        "usage": {"input_tokens": 3, "output_tokens": 4},
+    }
+
+    _, response = run_chat(
+        provider,
+        monkeypatch,
+        messages,
+        response_payload=response_payload,
+    )
+
+    assert response.finish_reason == "tool_calls"
+    assert response.tool_calls == [
+        {
+            "id": "call_42",
+            "type": "function",
+            "function": {"name": "get_weather", "arguments": "{\"location\": \"Tokyo\"}"},
+        }
+    ]
+    assert response.content == "Working on it."
+
+    openai_response = chat_response_from_provider(response)
+    choice = openai_response["choices"][0]
+    assert choice["finish_reason"] == "tool_calls"
+    assert choice["message"]["tool_calls"] == response.tool_calls
+    assert choice["message"]["content"] == "Working on it."
