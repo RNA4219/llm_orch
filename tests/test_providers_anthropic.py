@@ -24,6 +24,7 @@ def run_chat(
     *,
     tools: list[dict[str, Any]] | None = None,
     tool_choice: dict[str, Any] | None = None,
+    function_call: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], ProviderChatResponse]:
     captured: dict[str, Any] = {}
 
@@ -61,6 +62,7 @@ def run_chat(
             messages=messages,
             tools=tools,
             tool_choice=tool_choice,
+            function_call=function_call,
         )
 
     response = asyncio.run(invoke())
@@ -172,6 +174,31 @@ def test_anthropic_payload_includes_tools(monkeypatch: pytest.MonkeyPatch) -> No
     request_json = cast(dict[str, Any], captured["json"])
     assert request_json["tools"] == tools
     assert request_json["tool_choice"] == tool_choice
+
+
+def test_anthropic_payload_applies_function_call_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = build_anthropic_provider(monkeypatch)
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "lookup",
+                "description": "Lookup data",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ]
+
+    captured, _ = run_chat(
+        provider,
+        monkeypatch,
+        messages=[{"role": "user", "content": "hello"}],
+        tools=tools,
+        function_call={"name": "lookup"},
+    )
+
+    request_json = cast(dict[str, Any], captured["json"])
+    assert request_json["tool_choice"] == {"type": "tool", "name": "lookup"}
 
 
 def test_anthropic_payload_normalizes_tool_choice(monkeypatch: pytest.MonkeyPatch) -> None:
