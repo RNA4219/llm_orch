@@ -332,8 +332,16 @@ class AnthropicProvider(BaseProvider):
             raw_content = message["content"]
             if isinstance(raw_content, (list, dict)):
                 result_content = normalize_tool_result_blocks(raw_content)
+            elif raw_content is None or isinstance(raw_content, str):
+                text_content = normalize_text_content(raw_content)
+                result_content = normalize_tool_result_blocks(
+                    {"type": "text", "text": text_content}
+                )
             else:
-                result_content = normalize_text_content(raw_content)
+                text_content = normalize_text_content(raw_content)
+                result_content = normalize_tool_result_blocks(
+                    {"type": "text", "text": text_content}
+                )
             return {
                 "type": "tool_result",
                 "tool_use_id": tool_call_id,
