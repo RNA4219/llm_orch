@@ -254,6 +254,51 @@ def test_chat_forwards_tools_to_provider(
     assert records[-1]["status"] == 200
 
 
+def test_chat_forwards_function_call_to_provider(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+    records = capture_metric_records(server_module, monkeypatch)
+
+    from src.orch.types import ProviderChatResponse
+
+    function_call = {"name": "lookup", "arguments": "{}"}
+    provider_chat = AsyncMock(
+        return_value=ProviderChatResponse(
+            status_code=200,
+            model="dummy",
+            content="ok",
+        )
+    )
+
+    class MockProvider:
+        model = "dummy"
+
+        def __init__(self) -> None:
+            self.chat = provider_chat
+
+    monkeypatch.setitem(server_module.providers.providers, "dummy", MockProvider())
+
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "dummy",
+            "messages": [
+                {"role": "user", "content": "hi"},
+            ],
+            "function_call": function_call,
+        },
+    )
+
+    assert response.status_code == 200
+    provider_chat.assert_awaited_once()
+    assert provider_chat.await_args.kwargs["function_call"] == function_call
+    assert records
+    assert records[-1]["status"] == 200
+
+
 def test_chat_response_propagates_finish_reason_and_tool_calls(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1218,11 +1263,13 @@ def test_chat_retries_success_after_transient_failures(
             max_tokens: int = 2048,
             tools: list[dict[str, Any]] | None = None,
             tool_choice: dict[str, Any] | None = None,
+            function_call: dict[str, Any] | None = None,
         ) -> "ProviderChatResponse":
             from src.orch.types import ProviderChatResponse
 
             _ = tools
             _ = tool_choice
+            _ = function_call
             self.calls += 1
             if self.calls < 3:
                 raise RuntimeError(f"fail-{self.calls}")
