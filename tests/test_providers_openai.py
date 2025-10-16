@@ -12,7 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.orch.providers import OpenAICompatProvider  # noqa: E402
 from src.orch.router import ProviderDef  # noqa: E402
-from src.orch.types import ProviderChatResponse  # noqa: E402
+from src.orch.types import ProviderChatResponse, chat_response_from_provider  # noqa: E402
 
 
 def run_chat(
@@ -171,3 +171,26 @@ def test_openai_chat_response_uses_requested_model_when_missing(monkeypatch: pyt
 
     assert post_calls
     assert response.model == "gpt-4.1-mini"
+
+
+def test_chat_response_from_provider_preserves_tool_calls() -> None:
+    tool_calls = [
+        {
+            "id": "call_123",
+            "type": "function",
+            "function": {"name": "lookup", "arguments": "{\"key\": \"value\"}"},
+        }
+    ]
+    provider_response = ProviderChatResponse(
+        status_code=200,
+        model="gpt-4o",
+        finish_reason="tool_calls",
+        tool_calls=tool_calls,
+    )
+
+    payload = chat_response_from_provider(provider_response)
+
+    assert payload["choices"][0]["finish_reason"] == "tool_calls"
+    message = payload["choices"][0]["message"]
+    assert message["tool_calls"] == tool_calls
+    assert "content" not in message

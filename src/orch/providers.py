@@ -167,11 +167,15 @@ class AnthropicProvider(BaseProvider):
             if isinstance(block, dict) and block.get("type") == "text"
         )
         usage = data.get("usage") or {}
+        finish_reason = data.get("stop_reason")
+        tool_calls = data.get("tool_calls")
         response_model = data.get("model") or self.defn.model or model
         return ProviderChatResponse(
             status_code=r.status_code,
             model=response_model,
             content=content,
+            finish_reason=finish_reason,
+            tool_calls=tool_calls,
             usage_prompt_tokens=usage.get("input_tokens", 0),
             usage_completion_tokens=usage.get("output_tokens", 0),
         )
