@@ -12,7 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.orch.providers import OpenAICompatProvider  # noqa: E402
 from src.orch.router import ProviderDef  # noqa: E402
-from src.orch.types import ProviderChatResponse  # noqa: E402
+from src.orch.types import ProviderChatResponse, chat_response_from_provider  # noqa: E402
 
 
 def run_chat(
@@ -130,6 +130,11 @@ def test_openai_chat_response_preserves_finish_reason_and_tool_calls(
     assert response.model == "gpt-4o"
     assert response.usage_prompt_tokens == 3
     assert response.usage_completion_tokens == 4
+
+    payload = chat_response_from_provider(response)
+    assert payload["choices"][0]["finish_reason"] == "tool_calls"
+    assert payload["choices"][0]["message"]["tool_calls"] == tool_calls
+    assert "content" not in payload["choices"][0]["message"]
 
 
 @pytest.mark.parametrize(
