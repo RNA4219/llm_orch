@@ -137,15 +137,36 @@ class AnthropicProvider(BaseProvider):
                 key = raw_key.strip()
                 if key:
                     headers["x-api-key"] = key
-        system_messages = [m["content"] for m in messages if m["role"] == "system"]
+        def normalize_text_content(raw_content: Any) -> str:
+            if isinstance(raw_content, str):
+                return raw_content
+            if isinstance(raw_content, list):
+                parts: list[str] = []
+                for block in raw_content:
+                    if not isinstance(block, dict):
+                        raise ValueError("Anthropic messages must use dict blocks when providing lists of content.")
+                    block_type = block.get("type")
+                    if block_type != "text":
+                        raise ValueError(
+                            f"Unsupported Anthropic content block type: {block_type}. Only 'text' is allowed."
+                        )
+                    block_text = block.get("text")
+                    if not isinstance(block_text, str):
+                        raise ValueError("Anthropic text blocks must include a string 'text' value.")
+                    parts.append(block_text)
+                return "".join(parts)
+            raise ValueError("Anthropic messages must provide string or list content values.")
+
+        system_messages = [normalize_text_content(m["content"]) for m in messages if m["role"] == "system"]
         mapped: list[dict[str, Any]] = []
         for message in messages:
             if message["role"] not in ("user", "assistant"):
                 continue
+            text_content = normalize_text_content(message["content"])
             mapped.append(
                 {
                     "role": message["role"],
-                    "content": [{"type": "text", "text": message["content"]}],
+                    "content": [{"type": "text", "text": text_content}],
                 }
             )
         payload: dict[str, Any] = {
