@@ -29,7 +29,7 @@ class ChatRequest(BaseModel):
 class ProviderChatResponse(BaseModel):
     status_code: int = 200
     model: str
-    content: str | None = None
+    content: str | list[dict[str, Any]] | None = None
     finish_reason: str | None = None
     tool_calls: list[dict[str, Any]] | None = None
     function_call: dict[str, Any] | None = None
