@@ -120,6 +120,24 @@ def test_openai_compat_preserves_query_parameters(monkeypatch: pytest.MonkeyPatc
     assert response.content == "ok"
 
 
+def test_openai_compat_azure_sets_api_key_header(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider_def = ProviderDef(
+        name="azure-openai",
+        type="openai",
+        base_url="https://example.openai.azure.com/openai/deployments/foo",
+        model="gpt-4o",
+        auth_env="AZURE_OPENAI_API_KEY",
+        rpm=60,
+        concurrency=1,
+    )
+
+    captured, _ = _run_chat_and_capture(provider_def, "AZURE_OPENAI_API_KEY", monkeypatch)
+
+    headers = cast(dict[str, str], captured["headers"])
+    assert headers["api-key"] == "secret"
+    assert "Authorization" not in headers
+
+
 def test_openai_compat_async_client_post_receives_query_string(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -25,6 +25,9 @@ class OpenAICompatProvider(BaseProvider):
         path_segments = [segment for segment in normalized_path.split("/") if segment]
         hostname = (parsed.netloc or "").lower()
         is_openai_host = hostname.endswith("openai.com")
+        is_azure_openai_host = hostname.endswith("openai.azure.com") or hostname.endswith(
+            "cognitiveservices.azure.com"
+        )
 
         def is_version_segment(segment: str) -> bool:
             if not segment:
@@ -59,7 +62,10 @@ class OpenAICompatProvider(BaseProvider):
         if auth_env:
             key = os.environ.get(auth_env, "")
             if key:
-                headers["Authorization"] = f"Bearer {key}"
+                if is_azure_openai_host:
+                    headers["api-key"] = key
+                else:
+                    headers["Authorization"] = f"Bearer {key}"
         payload = {
             "model": self.defn.model or model,
             "messages": messages,
