@@ -61,6 +61,19 @@ def _normalize_anthropic_tool_choice(
 
 
 class BaseProvider:
+    _RESERVED_OPTION_KEYS: frozenset[str] = frozenset(
+        {
+            "model",
+            "messages",
+            "temperature",
+            "max_tokens",
+            "tools",
+            "tool_choice",
+            "function_call",
+            "stream",
+        }
+    )
+
     def __init__(self, defn: ProviderDef):
         self.defn = defn
         self.model = defn.model
@@ -75,8 +88,22 @@ class BaseProvider:
         tools: list[dict[str, Any]] | None = None,
         tool_choice: dict[str, Any] | str | None = None,
         function_call: dict[str, Any] | str | None = None,
+        **extra_options: Any,
     ) -> ProviderChatResponse:
         raise NotImplementedError
+
+    @classmethod
+    def _merge_extra_options(
+        cls, payload: dict[str, Any], extra_options: dict[str, Any] | None
+    ) -> None:
+        if not extra_options:
+            return
+        for key, value in extra_options.items():
+            if key in cls._RESERVED_OPTION_KEYS:
+                continue
+            if value is None:
+                continue
+            payload[key] = value
 
 class OpenAICompatProvider(BaseProvider):
     async def chat(
@@ -89,6 +116,7 @@ class OpenAICompatProvider(BaseProvider):
         tools: list[dict[str, Any]] | None = None,
         tool_choice: dict[str, Any] | str | None = None,
         function_call: dict[str, Any] | str | None = None,
+        **extra_options: Any,
     ) -> ProviderChatResponse:
         raw_base = self.defn.base_url.strip()
         parsed = urlparse(raw_base)
@@ -154,6 +182,7 @@ class OpenAICompatProvider(BaseProvider):
             payload["tool_choice"] = tool_choice
         if function_call is not None:
             payload["function_call"] = function_call
+        self._merge_extra_options(payload, extra_options)
         async with httpx.AsyncClient(timeout=60) as client:
             r = await client.post(url, headers=headers, json=payload)
             r.raise_for_status()
@@ -188,6 +217,7 @@ class AnthropicProvider(BaseProvider):
         tools: list[dict[str, Any]] | None = None,
         tool_choice: dict[str, Any] | str | None = None,
         function_call: dict[str, Any] | str | None = None,
+        **extra_options: Any,
     ) -> ProviderChatResponse:
         base = self.defn.base_url.strip()
         parsed = urlparse(base)
@@ -409,6 +439,7 @@ class AnthropicProvider(BaseProvider):
 
         if normalized_tool_choice is not None:
             payload["tool_choice"] = normalized_tool_choice
+        self._merge_extra_options(payload, extra_options)
         async with httpx.AsyncClient(timeout=60) as client:
             r = await client.post(url, headers=headers, json=payload)
             r.raise_for_status()
@@ -480,12 +511,25 @@ class OllamaProvider(BaseProvider):
         tools: list[dict[str, Any]] | None = None,
         tool_choice: dict[str, Any] | str | None = None,
         function_call: dict[str, Any] | str | None = None,
+        **extra_options: Any,
     ) -> ProviderChatResponse:
         url = f"{self.defn.base_url.rstrip('/')}/api/chat"
         _ = tools
         _ = tool_choice
         _ = function_call
-        payload = {"model": self.defn.model or model, "messages": messages, "stream": False, "options": {"temperature": temperature, "num_predict": max_tokens}}
+        payload = {
+            "model": self.defn.model or model,
+            "messages": messages,
+            "stream": False,
+            "options": {"temperature": temperature, "num_predict": max_tokens},
+        }
+        cleaned_options = {
+            key: value
+            for key, value in extra_options.items()
+            if key not in self._RESERVED_OPTION_KEYS and value is not None
+        }
+        if cleaned_options:
+            payload["options"].update(cleaned_options)
         async with httpx.AsyncClient(timeout=120) as client:
             r = await client.post(url, json=payload)
             r.raise_for_status()
@@ -514,11 +558,13 @@ class DummyProvider(BaseProvider):
         tools: list[dict[str, Any]] | None = None,
         tool_choice: dict[str, Any] | str | None = None,
         function_call: dict[str, Any] | str | None = None,
+        **extra_options: Any,
     ) -> ProviderChatResponse:
         # simple echo-ish behavior for tests
         _ = tools
         _ = tool_choice
         _ = function_call
+        _ = extra_options
         last_user = next((m["content"] for m in reversed(messages) if m["role"]=="user"), "ping")
         return ProviderChatResponse(
             status_code=200,
