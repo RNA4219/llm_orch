@@ -43,7 +43,11 @@ def _normalize_anthropic_tools(tools: list[dict[str, Any]]) -> list[dict[str, An
     return [_normalize_anthropic_tool(tool) for tool in tools]
 
 
-def _normalize_anthropic_tool_choice(tool_choice: dict[str, Any]) -> dict[str, Any]:
+def _normalize_anthropic_tool_choice(
+    tool_choice: dict[str, Any] | str,
+) -> dict[str, Any] | str:
+    if isinstance(tool_choice, str):
+        return tool_choice
     choice_type = tool_choice.get("type")
     if choice_type != "function":
         return dict(tool_choice)
@@ -484,7 +488,7 @@ class DummyProvider(BaseProvider):
         max_tokens=2048,
         *,
         tools: list[dict[str, Any]] | None = None,
-        tool_choice: dict[str, Any] | None = None,
+        tool_choice: dict[str, Any] | str | None = None,
         function_call: dict[str, Any] | str | None = None,
     ) -> ProviderChatResponse:
         # simple echo-ish behavior for tests
