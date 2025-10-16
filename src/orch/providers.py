@@ -23,11 +23,14 @@ class OpenAICompatProvider(BaseProvider):
         path = parsed.path or ""
         normalized_path = path.rstrip("/")
         path_segments = [segment for segment in normalized_path.split("/") if segment]
-        hostname = (parsed.netloc or "").lower()
+        hostname = (parsed.hostname or "").lower()
+        azure_compat_suffixes = ("openai.azure.com", "cognitiveservices.azure.com")
+
+        def _matches_suffix(host: str, suffix: str) -> bool:
+            return host == suffix or host.endswith(f".{suffix}")
+
         is_openai_host = hostname.endswith("openai.com")
-        is_azure_openai_host = hostname.endswith("openai.azure.com") or hostname.endswith(
-            "cognitiveservices.azure.com"
-        )
+        is_azure_openai_host = any(_matches_suffix(hostname, suffix) for suffix in azure_compat_suffixes)
 
         def is_version_segment(segment: str) -> bool:
             if not segment:
