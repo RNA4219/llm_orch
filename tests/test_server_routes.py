@@ -94,6 +94,12 @@ def test_chat_accepts_tool_role_messages(
     from src.orch.types import ProviderChatResponse
 
     tool_content = [{"type": "output_text", "text": "done"}]
+    tool_message = {
+        "role": "tool",
+        "name": "browser",
+        "tool_call_id": "call-1",
+        "content": tool_content,
+    }
     provider_chat = AsyncMock(
         return_value=ProviderChatResponse(
             status_code=200,
@@ -117,7 +123,7 @@ def test_chat_accepts_tool_role_messages(
             "model": "dummy",
             "messages": [
                 {"role": "user", "content": "hi"},
-                {"role": "tool", "content": tool_content},
+                tool_message,
             ],
         },
     )
@@ -128,7 +134,7 @@ def test_chat_accepts_tool_role_messages(
     assert called_args[0] == "dummy"
     assert called_args[1] == [
         {"role": "user", "content": "hi"},
-        {"role": "tool", "content": tool_content},
+        tool_message,
     ]
     assert records
     assert all(record.get("status") != 422 for record in records)
