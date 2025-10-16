@@ -170,6 +170,39 @@ def test_openai_chat_response_preserves_function_call(
     assert "content" not in message
 
 
+def test_openai_chat_response_preserves_list_content(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "secret")
+    provider = make_provider("https://api.openai.com")
+    content_blocks = [
+        {"type": "text", "text": "hello"},
+        {"type": "image_url", "image_url": {"url": "https://example.com/image.png"}},
+    ]
+    upstream_response = {
+        "model": "gpt-4o",
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": content_blocks,
+                },
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 2, "completion_tokens": 3},
+    }
+
+    post_calls, response = run_chat(provider, monkeypatch, upstream_response=upstream_response)
+
+    assert post_calls
+    assert response.content == content_blocks
+
+    payload = chat_response_from_provider(response)
+    message = payload["choices"][0]["message"]
+    assert message["content"] == content_blocks
+
+
 @pytest.mark.parametrize(
     "base_url",
     [
