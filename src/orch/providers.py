@@ -140,31 +140,67 @@ class AnthropicProvider(BaseProvider):
                 key = raw_key.strip()
                 if key:
                     headers["x-api-key"] = key
+        textual_block_types: set[str] = {"text", "output_text"}
+
+        def _normalize_text_block(block: Any) -> dict[str, Any]:
+            if not isinstance(block, dict):
+                raise ValueError(
+                    "Anthropic content blocks must be dictionaries with 'type' and 'text'."
+                )
+            block_type = block.get("type")
+            if not isinstance(block_type, str) or not block_type:
+                raise ValueError(
+                    "Anthropic content blocks require a non-empty string 'type'."
+                )
+            if block_type not in textual_block_types:
+                raise ValueError(
+                    "Anthropic text-like blocks must use 'text' or 'output_text' types."
+                )
+            block_text = block.get("text")
+            if not isinstance(block_text, str):
+                raise ValueError(
+                    "Anthropic text-like blocks must include string 'text' values."
+                )
+            return block
+
         def normalize_text_content(raw_content: Any) -> str:
             if raw_content is None:
                 return ""
             if isinstance(raw_content, str):
                 return raw_content
+            if isinstance(raw_content, dict):
+                block = _normalize_text_block(raw_content)
+                return block["text"]
             if isinstance(raw_content, list):
                 parts: list[str] = []
                 for block in raw_content:
-                    if not isinstance(block, dict):
-                        raise ValueError(
-                            "Anthropic content lists must contain dict blocks with 'type' and 'text'."
-                        )
-                    block_type = block.get("type")
-                    if not isinstance(block_type, str) or not block_type:
-                        raise ValueError(
-                            "Anthropic content blocks require a non-empty string 'type'."
-                        )
-                    block_text = block.get("text")
-                    if not isinstance(block_text, str):
-                        raise ValueError(
-                            "Anthropic text-like blocks must include string 'text' values."
-                        )
-                    parts.append(block_text)
+                    normalized_block = _normalize_text_block(block)
+                    parts.append(normalized_block["text"])
                 return "".join(parts)
             raise ValueError("Anthropic messages must provide string or list content values.")
+
+        def normalize_tool_result_blocks(raw_content: Any) -> list[dict[str, Any]]:
+            if isinstance(raw_content, list):
+                blocks_source = raw_content
+            else:
+                blocks_source = [raw_content]
+
+            normalized_blocks: list[dict[str, Any]] = []
+            for block in blocks_source:
+                if not isinstance(block, dict):
+                    raise ValueError(
+                        "Anthropic tool result content must be provided as dictionaries."
+                    )
+                block_type = block.get("type")
+                if not isinstance(block_type, str) or not block_type:
+                    raise ValueError(
+                        "Anthropic tool result blocks require a non-empty string 'type'."
+                    )
+                if block_type in textual_block_types:
+                    _normalize_text_block(block)
+                normalized_blocks.append(block)
+
+            return normalized_blocks
 
         def map_tool_call(tool_call: Any) -> dict[str, Any]:
             if not isinstance(tool_call, dict):
@@ -207,20 +243,8 @@ class AnthropicProvider(BaseProvider):
             if "content" not in message:
                 raise ValueError("Anthropic tool messages must include 'content'.")
             raw_content = message["content"]
-            if isinstance(raw_content, list):
-                normalized_blocks: list[dict[str, Any]] = []
-                for block in raw_content:
-                    if not isinstance(block, dict):
-                        raise ValueError(
-                            "Anthropic tool result content lists must contain block dictionaries."
-                        )
-                    block_type = block.get("type")
-                    if not isinstance(block_type, str) or not block_type:
-                        raise ValueError(
-                            "Anthropic tool result blocks require a non-empty string 'type'."
-                        )
-                    normalized_blocks.append(block)
-                result_content: str | list[dict[str, Any]] = normalized_blocks
+            if isinstance(raw_content, (list, dict)):
+                result_content = normalize_tool_result_blocks(raw_content)
             else:
                 result_content = normalize_text_content(raw_content)
             return {

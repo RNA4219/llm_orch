@@ -203,6 +203,34 @@ def test_anthropic_tool_message_accepts_structured_content(
     assert response.content == "done"
 
 
+def test_anthropic_tool_message_accepts_single_output_text_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = build_anthropic_provider(monkeypatch)
+    tool_block = {"type": "output_text", "text": "done"}
+    messages: list[dict[str, Any]] = [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "call", "tool_calls": []},
+        {"role": "tool", "tool_call_id": "call-1", "content": tool_block},
+    ]
+
+    captured, _ = run_chat(provider, monkeypatch, messages)
+
+    request_json = cast(dict[str, Any], captured["json"])
+    tool_messages = cast(list[dict[str, Any]], request_json["messages"])
+
+    assert tool_messages[-1] == {
+        "role": "user",
+        "content": [
+            {
+                "type": "tool_result",
+                "tool_use_id": "call-1",
+                "content": [tool_block],
+            }
+        ],
+    }
+
+
 def test_anthropic_payload_errors_on_tool_without_id(monkeypatch: pytest.MonkeyPatch) -> None:
     provider = build_anthropic_provider(monkeypatch)
     messages: list[dict[str, Any]] = [
