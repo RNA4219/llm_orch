@@ -84,6 +84,57 @@ def assert_single_req_id(records: list[dict[str, object]]) -> None:
     assert req_id
 
 
+def test_chat_accepts_tool_role_messages(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+    records = capture_metric_records(server_module, monkeypatch)
+
+    from src.orch.types import ProviderChatResponse
+
+    tool_content = [{"type": "output_text", "text": "done"}]
+    provider_chat = AsyncMock(
+        return_value=ProviderChatResponse(
+            status_code=200,
+            model="dummy",
+            content="ok",
+        )
+    )
+
+    class MockProvider:
+        model = "dummy"
+
+        def __init__(self) -> None:
+            self.chat = provider_chat
+
+    monkeypatch.setitem(server_module.providers.providers, "dummy", MockProvider())
+
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "dummy",
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "tool", "content": tool_content},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    provider_chat.assert_awaited_once()
+    called_args = provider_chat.await_args.args
+    assert called_args[0] == "dummy"
+    assert called_args[1] == [
+        {"role": "user", "content": "hi"},
+        {"role": "tool", "content": tool_content},
+    ]
+    assert records
+    assert all(record.get("status") != 422 for record in records)
+    assert records[-1]["status"] == 200
+
+
 def test_chat_rejects_stream_requests(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
