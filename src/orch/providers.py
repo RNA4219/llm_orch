@@ -9,6 +9,53 @@ import httpx
 from .router import ProviderDef
 from .types import ProviderChatResponse
 
+def _normalize_anthropic_tool(tool: dict[str, Any]) -> dict[str, Any]:
+    tool_type = tool.get("type")
+    if tool_type is None:
+        return dict(tool)
+    if tool_type != "function":
+        raise ValueError("Anthropic tools only support OpenAI function tool definitions.")
+    function = tool.get("function")
+    if not isinstance(function, dict):
+        raise ValueError("Anthropic function tools require a 'function' dictionary definition.")
+    name = function.get("name")
+    if not isinstance(name, str) or not name:
+        raise ValueError("Anthropic tools require a non-empty function name.")
+    description_field = function.get("description")
+    if description_field is None:
+        description_field = tool.get("description")
+    if description_field is not None and not isinstance(description_field, str):
+        raise ValueError("Anthropic tool descriptions must be strings when provided.")
+    parameters = function.get("parameters")
+    if parameters is None:
+        input_schema: dict[str, Any] = {"type": "object", "properties": {}}
+    else:
+        if not isinstance(parameters, dict):
+            raise ValueError("Anthropic tool parameters must be provided as dictionaries.")
+        input_schema = parameters
+    normalized: dict[str, Any] = {"name": name, "input_schema": input_schema}
+    if description_field:
+        normalized["description"] = description_field
+    return normalized
+
+
+def _normalize_anthropic_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [_normalize_anthropic_tool(tool) for tool in tools]
+
+
+def _normalize_anthropic_tool_choice(tool_choice: dict[str, Any]) -> dict[str, Any]:
+    choice_type = tool_choice.get("type")
+    if choice_type != "function":
+        return dict(tool_choice)
+    function = tool_choice.get("function")
+    if not isinstance(function, dict):
+        raise ValueError("Anthropic function tool_choice requires a 'function' dictionary.")
+    name = function.get("name")
+    if not isinstance(name, str) or not name:
+        raise ValueError("Anthropic tool_choice requires a non-empty function name.")
+    return {"type": "tool", "name": name}
+
+
 class BaseProvider:
     def __init__(self, defn: ProviderDef):
         self.defn = defn
@@ -331,46 +378,9 @@ class AnthropicProvider(BaseProvider):
         if system_messages:
             payload["system"] = "\n\n".join(system_messages)
         if tools is not None:
-            payload["tools"] = tools
-
-        def _normalize_tool_choice(
-            raw_choice: dict[str, Any] | str | None,
-        ) -> dict[str, Any] | str | None:
-            if raw_choice is None:
-                return None
-            if isinstance(raw_choice, str):
-                normalized = raw_choice.strip()
-                if not normalized:
-                    return None
-                lowered = normalized.lower()
-                if lowered in {"auto", "any", "none"}:
-                    return {"type": lowered}
-                return {"type": "tool", "name": normalized}
-            if not isinstance(raw_choice, dict):
-                return None
-            raw_type = raw_choice.get("type")
-            if isinstance(raw_type, str) and raw_type in {"auto", "any", "none"}:
-                return {"type": raw_type}
-            if isinstance(raw_type, str) and raw_type == "tool" and isinstance(raw_choice.get("name"), str):
-                return {"type": "tool", "name": raw_choice["name"]}
-            if raw_type == "function":
-                function_payload = raw_choice.get("function")
-                if (
-                    isinstance(function_payload, dict)
-                    and isinstance(function_payload.get("name"), str)
-                    and function_payload["name"]
-                ):
-                    return {"type": "tool", "name": function_payload["name"]}
-            name_value = raw_choice.get("name")
-            if isinstance(name_value, str) and name_value:
-                return {"type": "tool", "name": name_value}
-            return None
-
-        chosen = _normalize_tool_choice(tool_choice)
-        if chosen is None:
-            chosen = _normalize_tool_choice(function_call)
-        if chosen is not None:
-            payload["tool_choice"] = chosen
+            payload["tools"] = _normalize_anthropic_tools(tools)
+        if tool_choice is not None:
+            payload["tool_choice"] = _normalize_anthropic_tool_choice(tool_choice)
         async with httpx.AsyncClient(timeout=60) as client:
             r = await client.post(url, headers=headers, json=payload)
             r.raise_for_status()

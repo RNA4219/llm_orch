@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import sys
 from collections.abc import Callable
@@ -254,47 +255,133 @@ def test_chat_forwards_tools_to_provider(
     assert records[-1]["status"] == 200
 
 
-def test_chat_forwards_function_call_to_provider(
+def test_chat_forwards_tools_into_provider_http_payload(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     app = load_app("1")
     server_module = sys.modules["src.orch.server"]
     records = capture_metric_records(server_module, monkeypatch)
 
-    from src.orch.types import ProviderChatResponse
+    from src.orch.providers import AnthropicProvider, OpenAICompatProvider
+    from src.orch.router import ProviderDef
 
-    function_call = {"name": "lookup", "arguments": "{}"}
-    provider_chat = AsyncMock(
-        return_value=ProviderChatResponse(
-            status_code=200,
-            model="dummy",
-            content="ok",
+    openai_calls: list[dict[str, Any]] = []
+    anthropic_calls: list[dict[str, Any]] = []
+
+    async def fake_post(self: httpx.AsyncClient, url: str, **kwargs: Any) -> httpx.Response:
+        payload = kwargs.get("json", {})
+        captured = {"url": url, "json": json.loads(json.dumps(payload))}
+        request = httpx.Request("POST", url, headers=kwargs.get("headers", {}))
+        if "openai" in url:
+            openai_calls.append(captured)
+            response_json = {
+                "choices": [{"message": {"content": "ok"}}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            }
+        else:
+            anthropic_calls.append(captured)
+            response_json = {
+                "content": [{"type": "text", "text": "ok"}],
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            }
+        return httpx.Response(status_code=200, json=response_json, request=request)
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "lookup",
+                "description": "Lookup data",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"q": {"type": "string"}},
+                    "required": ["q"],
+                },
+            },
+        }
+    ]
+    tool_choice = {"type": "function", "function": {"name": "lookup"}}
+
+    server_module.providers.providers["dummy"] = OpenAICompatProvider(
+        ProviderDef(
+            name="dummy",
+            type="openai",
+            base_url="https://api.openai.com",
+            model="gpt-4o",
+            auth_env=None,
+            rpm=60,
+            concurrency=1,
         )
     )
-
-    class MockProvider:
-        model = "dummy"
-
-        def __init__(self) -> None:
-            self.chat = provider_chat
-
-    monkeypatch.setitem(server_module.providers.providers, "dummy", MockProvider())
-
-    client = TestClient(app)
-    response = client.post(
-        "/v1/chat/completions",
-        json={
-            "model": "dummy",
-            "messages": [
-                {"role": "user", "content": "hi"},
-            ],
-            "function_call": function_call,
-        },
+    assert isinstance(
+        server_module.providers.providers["dummy"], OpenAICompatProvider
     )
 
+    client = TestClient(app)
+    response = client.post("/v1/chat/completions", json={
+        "model": "dummy",
+        "messages": [{"role": "user", "content": "hi"}],
+        "tools": json.loads(json.dumps(tools)),
+        "tool_choice": json.loads(json.dumps(tool_choice)),
+    })
+
     assert response.status_code == 200
-    provider_chat.assert_awaited_once()
-    assert provider_chat.await_args.kwargs["function_call"] == function_call
+    assert openai_calls
+    openai_payload = openai_calls[0]["json"]
+    assert openai_calls[0]["url"].endswith("/v1/chat/completions")
+    assert "tools" in openai_payload
+    assert openai_payload["tools"]
+    openai_tool = openai_payload["tools"][0]
+    if "function" in openai_tool:
+        assert openai_tool["function"]["name"] == "lookup"
+    else:
+        assert openai_tool["name"] == "lookup"
+    openai_choice = openai_payload.get("tool_choice")
+    assert openai_choice is not None
+    if openai_choice.get("type") == "function":
+        assert openai_choice["function"]["name"] == "lookup"
+    else:
+        assert openai_choice.get("name") == "lookup"
+
+    server_module.providers.providers["dummy"] = AnthropicProvider(
+        ProviderDef(
+            name="dummy",
+            type="anthropic",
+            base_url="https://api.anthropic.com",
+            model="claude-3-opus-20240229",
+            auth_env=None,
+            rpm=60,
+            concurrency=1,
+        )
+    )
+    assert isinstance(
+        server_module.providers.providers["dummy"], AnthropicProvider
+    )
+
+    response = client.post("/v1/chat/completions", json={
+        "model": "dummy",
+        "messages": [{"role": "user", "content": "hi"}],
+        "tools": json.loads(json.dumps(tools)),
+        "tool_choice": json.loads(json.dumps(tool_choice)),
+    })
+
+    assert response.status_code == 200
+    assert anthropic_calls
+    anthropic_payload = anthropic_calls[0]["json"]
+    assert anthropic_payload["tools"] == [
+        {
+            "name": "lookup",
+            "description": "Lookup data",
+            "input_schema": {
+                "type": "object",
+                "properties": {"q": {"type": "string"}},
+                "required": ["q"],
+            },
+        }
+    ]
+    assert anthropic_payload["tool_choice"] == {"type": "tool", "name": "lookup"}
     assert records
     assert records[-1]["status"] == 200
 
