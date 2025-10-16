@@ -305,6 +305,86 @@ def test_chat_forwards_tools_to_provider(
     assert records[-1]["status"] == 200
 
 
+def test_chat_forwards_extra_options(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+
+    from src.orch.types import ProviderChatResponse
+
+    extra_options = {
+        "top_p": 0.42,
+        "response_format": {"type": "json_object"},
+    }
+
+    provider_chat = AsyncMock(
+        return_value=ProviderChatResponse(
+            status_code=200,
+            model="dummy",
+            content="ok",
+        )
+    )
+
+    class MockProvider:
+        model = "dummy"
+
+        def __init__(self) -> None:
+            self.chat = provider_chat
+
+    monkeypatch.setitem(server_module.providers.providers, "dummy", MockProvider())
+
+    client = TestClient(app)
+    request_body = {
+        "model": "dummy",
+        "messages": [{"role": "user", "content": "hi"}],
+        **extra_options,
+    }
+    response = client.post("/v1/chat/completions", json=request_body)
+
+    assert response.status_code == 200
+    provider_chat.assert_awaited_once()
+    kwargs = provider_chat.await_args.kwargs
+    assert kwargs["top_p"] == extra_options["top_p"]
+    assert kwargs["response_format"] == extra_options["response_format"]
+
+    from src.orch.providers import OpenAICompatProvider
+    from src.orch.router import ProviderDef
+
+    openai_calls: list[dict[str, Any]] = []
+
+    async def fake_post(self: httpx.AsyncClient, url: str, **kwargs: Any) -> httpx.Response:
+        openai_calls.append({"url": url, "json": kwargs.get("json", {})})
+        request = httpx.Request("POST", url, headers=kwargs.get("headers", {}))
+        response_json = {
+            "choices": [{"message": {"content": "ok"}}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+        }
+        return httpx.Response(status_code=200, json=response_json, request=request)
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    server_module.providers.providers["dummy"] = OpenAICompatProvider(
+        ProviderDef(
+            name="dummy",
+            type="openai",
+            base_url="https://api.openai.com",
+            model="gpt-4o",
+            auth_env=None,
+            rpm=60,
+            concurrency=1,
+        )
+    )
+
+    response = client.post("/v1/chat/completions", json=request_body)
+
+    assert response.status_code == 200
+    assert openai_calls
+    payload = openai_calls[0]["json"]
+    assert payload["top_p"] == extra_options["top_p"]
+    assert payload["response_format"] == extra_options["response_format"]
+
+
 def test_chat_forwards_tools_into_provider_http_payload(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

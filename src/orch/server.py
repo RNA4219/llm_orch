@@ -2,6 +2,7 @@ import asyncio
 import os
 import time
 import uuid
+from typing import Any
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -145,6 +146,14 @@ async def chat_completions(req: Request, body: ChatRequest):
         for message in body.messages
     ]
     function_call = getattr(body, "function_call", None)
+    extra_options_source = getattr(body, "model_extra", None)
+    additional_options: dict[str, Any] = {}
+    if isinstance(extra_options_source, dict):
+        additional_options = {
+            key: value
+            for key, value in extra_options_source.items()
+            if key != "function_call" and value is not None
+        }
     if "temperature" in body.model_fields_set and body.temperature is not None:
         temperature = body.temperature
     else:
@@ -173,6 +182,7 @@ async def chat_completions(req: Request, body: ChatRequest):
                         tools=body.tools,
                         tool_choice=body.tool_choice,
                         function_call=function_call,
+                        **additional_options,
                     )
                 except Exception as exc:
                     last_err = str(exc)
