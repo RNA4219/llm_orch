@@ -137,6 +137,39 @@ def test_openai_chat_response_preserves_finish_reason_and_tool_calls(
     assert "content" not in payload["choices"][0]["message"]
 
 
+def test_openai_chat_response_preserves_function_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "secret")
+    provider = make_provider("https://api.openai.com")
+    function_call = {"name": "lookup", "arguments": "{\"key\": \"value\"}"}
+    upstream_response = {
+        "model": "gpt-4o",
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "function_call": function_call,
+                },
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 2, "completion_tokens": 3},
+    }
+
+    post_calls, response = run_chat(provider, monkeypatch, upstream_response=upstream_response)
+
+    assert post_calls
+    assert response.content is None
+    assert response.function_call == function_call
+
+    payload = chat_response_from_provider(response)
+    message = payload["choices"][0]["message"]
+    assert message["function_call"] == function_call
+    assert "content" not in message
+
+
 @pytest.mark.parametrize(
     "base_url",
     [

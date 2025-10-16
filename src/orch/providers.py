@@ -86,6 +86,7 @@ class OpenAICompatProvider(BaseProvider):
         content = message.get("content")
         finish_reason = choice.get("finish_reason")
         tool_calls = message.get("tool_calls")
+        function_call = message.get("function_call")
         usage = data.get("usage") or {}
         response_model = data.get("model") or self.defn.model or model
         return ProviderChatResponse(
@@ -94,6 +95,7 @@ class OpenAICompatProvider(BaseProvider):
             content=content,
             finish_reason=finish_reason,
             tool_calls=tool_calls,
+            function_call=function_call,
             usage_prompt_tokens=usage.get("prompt_tokens", 0),
             usage_completion_tokens=usage.get("completion_tokens", 0),
         )
