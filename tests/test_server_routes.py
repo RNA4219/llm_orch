@@ -141,6 +141,62 @@ def test_chat_accepts_tool_role_messages(
     assert records[-1]["status"] == 200
 
 
+def test_chat_preserves_message_extra_fields(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+    records = capture_metric_records(server_module, monkeypatch)
+
+    from src.orch.types import ProviderChatResponse
+
+    extra_message = {
+        "role": "assistant",
+        "content": "function call",
+        "name": "planner",
+        "tool_call_id": "call-123",
+    }
+    provider_chat = AsyncMock(
+        return_value=ProviderChatResponse(
+            status_code=200,
+            model="dummy",
+            content="ok",
+        )
+    )
+
+    class MockProvider:
+        model = "dummy"
+
+        def __init__(self) -> None:
+            self.chat = provider_chat
+
+    monkeypatch.setitem(server_module.providers.providers, "dummy", MockProvider())
+
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "dummy",
+            "messages": [
+                {"role": "user", "content": "hi"},
+                extra_message,
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    provider_chat.assert_awaited_once()
+    called_args = provider_chat.await_args.args
+    assert called_args[0] == "dummy"
+    assert called_args[1] == [
+        {"role": "user", "content": "hi"},
+        extra_message,
+    ]
+    assert records
+    assert all(record.get("status") != 422 for record in records)
+    assert records[-1]["status"] == 200
+
+
 def test_chat_response_propagates_finish_reason_and_tool_calls(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

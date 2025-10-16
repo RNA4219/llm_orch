@@ -140,7 +140,10 @@ async def chat_completions(req: Request, body: ChatRequest):
     last_model = body.model
     success_response: ProviderChatResponse | None = None
     success_record: dict[str, object] | None = None
-    normalized_messages = [m.model_dump(exclude_none=True) for m in body.messages]
+    normalized_messages = [
+        message.model_dump(mode="json", exclude_none=True)
+        for message in body.messages
+    ]
     if "temperature" in body.model_fields_set and body.temperature is not None:
         temperature = body.temperature
     else:
