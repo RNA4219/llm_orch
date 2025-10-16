@@ -169,6 +169,8 @@ async def chat_completions(req: Request, body: ChatRequest):
                         normalized_messages,
                         temperature=temperature,
                         max_tokens=max_tokens,
+                        tools=body.tools,
+                        tool_choice=body.tool_choice,
                     )
                 except Exception as exc:
                     last_err = str(exc)

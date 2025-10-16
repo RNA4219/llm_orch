@@ -21,6 +21,9 @@ def run_chat(
     messages: list[dict[str, Any]],
     request_model: str = "claude-3-sonnet",
     response_payload: dict[str, Any] | None = None,
+    *,
+    tools: list[dict[str, Any]] | None = None,
+    tool_choice: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], ProviderChatResponse]:
     captured: dict[str, Any] = {}
 
@@ -53,7 +56,12 @@ def run_chat(
 
     async def invoke() -> ProviderChatResponse:
         monkeypatch.setattr(httpx, "AsyncClient", DummyAsyncClient)
-        return await provider.chat(model=request_model, messages=messages)
+        return await provider.chat(
+            model=request_model,
+            messages=messages,
+            tools=tools,
+            tool_choice=tool_choice,
+        )
 
     response = asyncio.run(invoke())
     return captured, response
@@ -136,6 +144,34 @@ def test_anthropic_payload_maps_openai_messages(monkeypatch: pytest.MonkeyPatch)
     assert response.content == "ok"
     assert response.usage_prompt_tokens == 1
     assert response.usage_completion_tokens == 2
+
+
+def test_anthropic_payload_includes_tools(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = build_anthropic_provider(monkeypatch)
+    tools = [
+        {
+            "name": "lookup",
+            "description": "Lookup data",
+            "input_schema": {
+                "type": "object",
+                "properties": {"q": {"type": "string"}},
+                "required": ["q"],
+            },
+        }
+    ]
+    tool_choice = {"type": "tool", "name": "lookup"}
+
+    captured, _ = run_chat(
+        provider,
+        monkeypatch,
+        messages=[{"role": "user", "content": "hello"}],
+        tools=tools,
+        tool_choice=tool_choice,
+    )
+
+    request_json = cast(dict[str, Any], captured["json"])
+    assert request_json["tools"] == tools
+    assert request_json["tool_choice"] == tool_choice
 
 
 def test_anthropic_payload_maps_tool_messages(monkeypatch: pytest.MonkeyPatch) -> None:

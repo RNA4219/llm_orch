@@ -14,11 +14,29 @@ class BaseProvider:
         self.defn = defn
         self.model = defn.model
 
-    async def chat(self, model: str, messages: List[dict[str, Any]], temperature=0.2, max_tokens=2048) -> ProviderChatResponse:
+    async def chat(
+        self,
+        model: str,
+        messages: List[dict[str, Any]],
+        temperature=0.2,
+        max_tokens=2048,
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: dict[str, Any] | None = None,
+    ) -> ProviderChatResponse:
         raise NotImplementedError
 
 class OpenAICompatProvider(BaseProvider):
-    async def chat(self, model: str, messages: List[dict[str, Any]], temperature=0.2, max_tokens=2048) -> ProviderChatResponse:
+    async def chat(
+        self,
+        model: str,
+        messages: List[dict[str, Any]],
+        temperature=0.2,
+        max_tokens=2048,
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: dict[str, Any] | None = None,
+    ) -> ProviderChatResponse:
         raw_base = self.defn.base_url.strip()
         parsed = urlparse(raw_base)
         path = parsed.path or ""
@@ -70,13 +88,17 @@ class OpenAICompatProvider(BaseProvider):
                     headers["api-key"] = key
                 else:
                     headers["Authorization"] = f"Bearer {key}"
-        payload = {
+        payload: dict[str, Any] = {
             "model": self.defn.model or model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": False,
         }
+        if tools is not None:
+            payload["tools"] = tools
+        if tool_choice is not None:
+            payload["tool_choice"] = tool_choice
         async with httpx.AsyncClient(timeout=60) as client:
             r = await client.post(url, headers=headers, json=payload)
             r.raise_for_status()
@@ -101,7 +123,16 @@ class OpenAICompatProvider(BaseProvider):
         )
 
 class AnthropicProvider(BaseProvider):
-    async def chat(self, model: str, messages: List[dict[str, Any]], temperature=0.2, max_tokens=2048) -> ProviderChatResponse:
+    async def chat(
+        self,
+        model: str,
+        messages: List[dict[str, Any]],
+        temperature=0.2,
+        max_tokens=2048,
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: dict[str, Any] | None = None,
+    ) -> ProviderChatResponse:
         base = self.defn.base_url.strip()
         parsed = urlparse(base)
         path = parsed.path or ""
@@ -294,6 +325,10 @@ class AnthropicProvider(BaseProvider):
         }
         if system_messages:
             payload["system"] = "\n\n".join(system_messages)
+        if tools is not None:
+            payload["tools"] = tools
+        if tool_choice is not None:
+            payload["tool_choice"] = tool_choice
         async with httpx.AsyncClient(timeout=60) as client:
             r = await client.post(url, headers=headers, json=payload)
             r.raise_for_status()
@@ -355,8 +390,19 @@ class AnthropicProvider(BaseProvider):
         )
 
 class OllamaProvider(BaseProvider):
-    async def chat(self, model: str, messages: List[dict[str, Any]], temperature=0.2, max_tokens=2048) -> ProviderChatResponse:
+    async def chat(
+        self,
+        model: str,
+        messages: List[dict[str, Any]],
+        temperature=0.2,
+        max_tokens=2048,
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: dict[str, Any] | None = None,
+    ) -> ProviderChatResponse:
         url = f"{self.defn.base_url.rstrip('/')}/api/chat"
+        _ = tools
+        _ = tool_choice
         payload = {"model": self.defn.model or model, "messages": messages, "stream": False, "options": {"temperature": temperature, "num_predict": max_tokens}}
         async with httpx.AsyncClient(timeout=120) as client:
             r = await client.post(url, json=payload)
@@ -376,8 +422,19 @@ class OllamaProvider(BaseProvider):
         )
 
 class DummyProvider(BaseProvider):
-    async def chat(self, model: str, messages: List[dict[str, Any]], temperature=0.2, max_tokens=2048) -> ProviderChatResponse:
+    async def chat(
+        self,
+        model: str,
+        messages: List[dict[str, Any]],
+        temperature=0.2,
+        max_tokens=2048,
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: dict[str, Any] | None = None,
+    ) -> ProviderChatResponse:
         # simple echo-ish behavior for tests
+        _ = tools
+        _ = tool_choice
         last_user = next((m["content"] for m in reversed(messages) if m["role"]=="user"), "ping")
         return ProviderChatResponse(
             status_code=200,
