@@ -160,12 +160,46 @@ class AnthropicProvider(BaseProvider):
         system_messages = [normalize_text_content(m["content"]) for m in messages if m["role"] == "system"]
         mapped: list[dict[str, Any]] = []
         for message in messages:
-            if message["role"] not in ("user", "assistant"):
+            role = message.get("role")
+            if role == "tool":
+                tool_call_id = message.get("tool_call_id")
+                if not isinstance(tool_call_id, str) or not tool_call_id:
+                    raise ValueError("Anthropic tool messages must include a non-empty 'tool_call_id'.")
+                raw_content = message.get("content")
+                tool_blocks: list[dict[str, Any]]
+                if isinstance(raw_content, str):
+                    tool_blocks = [{"type": "text", "text": raw_content}]
+                elif isinstance(raw_content, list):
+                    tool_blocks = []
+                    for block in raw_content:
+                        if not isinstance(block, dict):
+                            raise ValueError(
+                                "Anthropic tool message 'content' lists must contain dict blocks."
+                            )
+                        tool_blocks.append(block)
+                else:
+                    raise ValueError(
+                        "Anthropic tool messages must provide string or list content values."
+                    )
+                mapped.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": tool_call_id,
+                                "content": tool_blocks,
+                            }
+                        ],
+                    }
+                )
+                continue
+            if role not in ("user", "assistant"):
                 continue
             text_content = normalize_text_content(message["content"])
             mapped.append(
                 {
-                    "role": message["role"],
+                    "role": role,
                     "content": [{"type": "text", "text": text_content}],
                 }
             )
