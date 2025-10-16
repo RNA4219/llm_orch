@@ -19,6 +19,7 @@ def run_chat(
     provider: OpenAICompatProvider,
     monkeypatch: pytest.MonkeyPatch,
     request_model: str = "gpt-4o",
+    upstream_response: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], ProviderChatResponse]:
     post_calls: list[dict[str, Any]] = []
     response: ProviderChatResponse | None = None
@@ -30,7 +31,8 @@ def run_chat(
         request = httpx.Request("POST", url, headers=headers)
         return httpx.Response(
             status_code=200,
-            json={
+            json=upstream_response
+            or {
                 "choices": [{"message": {"content": "ok"}}],
                 "usage": {"prompt_tokens": 1, "completion_tokens": 2},
             },
@@ -94,6 +96,40 @@ def test_openai_base_url_uses_chat_completions(monkeypatch: pytest.MonkeyPatch) 
 
     assert post_calls
     assert post_calls[0]["url"] == "https://api.openai.com/v1/chat/completions"
+
+
+def test_openai_chat_response_preserves_finish_reason_and_tool_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "secret")
+    provider = make_provider("https://api.openai.com")
+    tool_calls = [
+        {
+            "id": "call_123",
+            "type": "function",
+            "function": {"name": "lookup", "arguments": "{\"key\": \"value\"}"},
+        }
+    ]
+    upstream_response = {
+        "model": "gpt-4o",
+        "choices": [
+            {
+                "message": {"role": "assistant", "content": None, "tool_calls": tool_calls},
+                "finish_reason": "tool_calls",
+            }
+        ],
+        "usage": {"prompt_tokens": 3, "completion_tokens": 4},
+    }
+
+    post_calls, response = run_chat(provider, monkeypatch, upstream_response=upstream_response)
+
+    assert post_calls
+    assert response.content is None
+    assert response.finish_reason == "tool_calls"
+    assert response.tool_calls == tool_calls
+    assert response.model == "gpt-4o"
+    assert response.usage_prompt_tokens == 3
+    assert response.usage_completion_tokens == 4
 
 
 @pytest.mark.parametrize(

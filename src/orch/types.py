@@ -1,4 +1,4 @@
-from typing import List, Optional, Literal, Any
+from typing import Any, List, Optional, Literal
 from pydantic import BaseModel, Field
 
 class ChatMessage(BaseModel):
@@ -15,7 +15,9 @@ class ChatRequest(BaseModel):
 class ProviderChatResponse(BaseModel):
     status_code: int = 200
     model: str
-    content: str
+    content: str | None
+    finish_reason: str | None = None
+    tool_calls: list[dict[str, Any]] | None = None
     usage_prompt_tokens: Optional[int] = 0
     usage_completion_tokens: Optional[int] = 0
 
@@ -28,8 +30,16 @@ def chat_response_from_provider(p: ProviderChatResponse) -> dict[str, Any]:
         "model": p.model,
         "choices": [{
             "index": 0,
-            "message": {"role": "assistant", "content": p.content},
-            "finish_reason": "stop"
+            "message": {
+                key: value
+                for key, value in {
+                    "role": "assistant",
+                    "content": p.content,
+                    "tool_calls": p.tool_calls,
+                }.items()
+                if value is not None
+            },
+            "finish_reason": p.finish_reason or "stop"
         }],
         "usage": {
             "prompt_tokens": p.usage_prompt_tokens or 0,
