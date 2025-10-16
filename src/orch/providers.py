@@ -1,3 +1,4 @@
+import json
 import os
 import re
 from urllib.parse import urlparse, urlunparse
@@ -138,13 +139,17 @@ class AnthropicProvider(BaseProvider):
                 if key:
                     headers["x-api-key"] = key
         def normalize_text_content(raw_content: Any) -> str:
+            if raw_content is None:
+                return ""
             if isinstance(raw_content, str):
                 return raw_content
             if isinstance(raw_content, list):
                 parts: list[str] = []
                 for block in raw_content:
                     if not isinstance(block, dict):
-                        raise ValueError("Anthropic messages must use dict blocks when providing lists of content.")
+                        raise ValueError(
+                            "Anthropic content lists must contain dict blocks with 'type' and 'text'."
+                        )
                     block_type = block.get("type")
                     if block_type != "text":
                         raise ValueError(
@@ -152,23 +157,91 @@ class AnthropicProvider(BaseProvider):
                         )
                     block_text = block.get("text")
                     if not isinstance(block_text, str):
-                        raise ValueError("Anthropic text blocks must include a string 'text' value.")
+                        raise ValueError("Anthropic text blocks must include string 'text' values.")
                     parts.append(block_text)
                 return "".join(parts)
             raise ValueError("Anthropic messages must provide string or list content values.")
 
-        system_messages = [normalize_text_content(m["content"]) for m in messages if m["role"] == "system"]
+        def map_tool_call(tool_call: Any) -> dict[str, Any]:
+            if not isinstance(tool_call, dict):
+                raise ValueError("Anthropic tool calls must be dictionaries.")
+            identifier = tool_call.get("id")
+            if not isinstance(identifier, str) or not identifier:
+                raise ValueError("Anthropic tool calls require a non-empty string 'id'.")
+            call_type = tool_call.get("type")
+            if call_type not in (None, "function"):
+                raise ValueError("Unsupported Anthropic tool call type. Only 'function' is allowed.")
+            function = tool_call.get("function")
+            if not isinstance(function, dict):
+                raise ValueError("Anthropic tool calls require a 'function' definition.")
+            name = function.get("name")
+            if not isinstance(name, str) or not name:
+                raise ValueError("Anthropic tool call functions require a non-empty string 'name'.")
+            raw_arguments = function.get("arguments")
+            if isinstance(raw_arguments, str):
+                try:
+                    input_payload: Any = json.loads(raw_arguments) if raw_arguments else {}
+                except json.JSONDecodeError as exc:
+                    raise ValueError("Anthropic tool call arguments must be valid JSON strings.") from exc
+            elif isinstance(raw_arguments, dict):
+                input_payload = raw_arguments
+            elif raw_arguments is None:
+                input_payload = {}
+            else:
+                raise ValueError("Anthropic tool call arguments must be provided as JSON strings or dicts.")
+            return {
+                "type": "tool_use",
+                "id": identifier,
+                "name": name,
+                "input": input_payload,
+            }
+
+        def map_tool_result(message: dict[str, Any]) -> dict[str, Any]:
+            tool_call_id = message.get("tool_call_id")
+            if not isinstance(tool_call_id, str) or not tool_call_id:
+                raise ValueError("Anthropic tool messages require a 'tool_call_id'.")
+            if "content" not in message:
+                raise ValueError("Anthropic tool messages must include 'content'.")
+            result_text = normalize_text_content(message["content"])
+            return {
+                "type": "tool_result",
+                "tool_use_id": tool_call_id,
+                "content": result_text,
+            }
+
+        system_messages: list[str] = []
         mapped: list[dict[str, Any]] = []
         for message in messages:
-            if message["role"] not in ("user", "assistant"):
+            role = message.get("role")
+            if role == "system":
+                if "content" not in message:
+                    raise ValueError("Anthropic system messages must include 'content'.")
+                system_messages.append(normalize_text_content(message["content"]))
                 continue
-            text_content = normalize_text_content(message["content"])
-            mapped.append(
-                {
-                    "role": message["role"],
-                    "content": [{"type": "text", "text": text_content}],
-                }
-            )
+            if role == "tool":
+                mapped.append(
+                    {
+                        "role": "user",
+                        "content": [map_tool_result(message)],
+                    }
+                )
+                continue
+            if role not in ("user", "assistant"):
+                continue
+            content_blocks: list[dict[str, Any]] = []
+            if "content" in message:
+                text_content = normalize_text_content(message["content"])
+                if text_content:
+                    content_blocks.append({"type": "text", "text": text_content})
+            tool_calls = message.get("tool_calls")
+            if tool_calls:
+                if not isinstance(tool_calls, list):
+                    raise ValueError("Anthropic tool calls must be provided as a list.")
+                for tool_call in tool_calls:
+                    content_blocks.append(map_tool_call(tool_call))
+            if not content_blocks:
+                content_blocks.append({"type": "text", "text": ""})
+            mapped.append({"role": role, "content": content_blocks})
         payload: dict[str, Any] = {
             "model": self.defn.model or model,
             "max_tokens": max_tokens,

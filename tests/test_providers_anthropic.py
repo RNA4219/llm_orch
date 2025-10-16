@@ -56,7 +56,7 @@ def run_chat(
     return captured, response
 
 
-def test_anthropic_payload_maps_openai_messages(monkeypatch: pytest.MonkeyPatch) -> None:
+def build_anthropic_provider(monkeypatch: pytest.MonkeyPatch) -> AnthropicProvider:
     provider_def = ProviderDef(
         name="anthropic",
         type="anthropic",
@@ -67,8 +67,50 @@ def test_anthropic_payload_maps_openai_messages(monkeypatch: pytest.MonkeyPatch)
         concurrency=1,
     )
     provider = AnthropicProvider(provider_def)
-
     monkeypatch.setenv("ANTHROPIC_API_KEY", "secret")
+    return provider
+
+
+def test_anthropic_chat_normalizes_structured_messages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = build_anthropic_provider(monkeypatch)
+
+    messages: list[dict[str, Any]] = [
+        {
+            "role": "system",
+            "content": [
+                {"type": "text", "text": "alpha"},
+                {"type": "text", "text": "beta"},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "hello"},
+                {"type": "text", "text": "world"},
+            ],
+        },
+    ]
+
+    captured, response = run_chat(provider, monkeypatch, messages)
+
+    request_json = cast(dict[str, Any], captured["json"])
+    assert request_json["system"] == "alphabeta"
+
+    messages_payload = cast(list[dict[str, Any]], request_json["messages"])
+    assert messages_payload == [
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": "helloworld"}],
+        }
+    ]
+
+    assert response.content == "ok"
+
+
+def test_anthropic_payload_maps_openai_messages(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = build_anthropic_provider(monkeypatch)
 
     messages = [
         {"role": "system", "content": "you are helpful"},
@@ -96,18 +138,7 @@ def test_anthropic_payload_maps_openai_messages(monkeypatch: pytest.MonkeyPatch)
 def test_anthropic_payload_normalizes_structured_content(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    provider_def = ProviderDef(
-        name="anthropic",
-        type="anthropic",
-        base_url="https://api.anthropic.com",
-        model="claude-3-sonnet",
-        auth_env="ANTHROPIC_API_KEY",
-        rpm=60,
-        concurrency=1,
-    )
-    provider = AnthropicProvider(provider_def)
-
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "secret")
+    provider = build_anthropic_provider(monkeypatch)
 
     messages: list[dict[str, Any]] = [
         {
@@ -229,3 +260,74 @@ def test_anthropic_chat_omits_api_key_when_no_env_set(monkeypatch: pytest.Monkey
     captured, _ = run_chat(provider, monkeypatch, messages)
 
     assert captured["url"] == "https://api.anthropic.com/v1/messages"
+
+
+def test_anthropic_payload_maps_tool_messages(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = build_anthropic_provider(monkeypatch)
+
+    messages: list[dict[str, Any]] = [
+        {"role": "user", "content": "hello"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        "arguments": "{\"location\": \"Tokyo\"}",
+                    },
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call_1",
+            "content": "sunny",
+        },
+        {"role": "assistant", "content": "done"},
+    ]
+
+    captured, _ = run_chat(provider, monkeypatch, messages)
+
+    payload = cast(dict[str, Any], captured["json"])
+    anthropic_messages = cast(list[dict[str, Any]], payload["messages"])
+
+    assert anthropic_messages == [
+        {"role": "user", "content": [{"type": "text", "text": "hello"}]},
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "call_1",
+                    "name": "get_weather",
+                    "input": {"location": "Tokyo"},
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "call_1",
+                    "content": "sunny",
+                }
+            ],
+        },
+        {"role": "assistant", "content": [{"type": "text", "text": "done"}]},
+    ]
+
+
+def test_anthropic_payload_errors_on_tool_without_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = build_anthropic_provider(monkeypatch)
+
+    messages: list[dict[str, Any]] = [
+        {"role": "user", "content": "hello"},
+        {"role": "tool", "content": "result"},
+    ]
+
+    with pytest.raises(ValueError, match="tool_call_id"):
+        run_chat(provider, monkeypatch, messages)
