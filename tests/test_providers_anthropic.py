@@ -174,6 +174,46 @@ def test_anthropic_payload_includes_tools(monkeypatch: pytest.MonkeyPatch) -> No
     assert request_json["tool_choice"] == tool_choice
 
 
+def test_anthropic_payload_normalizes_tool_choice(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = build_anthropic_provider(monkeypatch)
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "lookup",
+                "description": "Lookup data",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"q": {"type": "string"}},
+                    "required": ["q"],
+                },
+            },
+        }
+    ]
+
+    captured, _ = run_chat(
+        provider,
+        monkeypatch,
+        messages=[{"role": "user", "content": "hello"}],
+        tools=tools,
+        tool_choice={"type": "function", "function": {"name": "lookup"}},
+    )
+
+    request_json = cast(dict[str, Any], captured["json"])
+    assert request_json["tool_choice"] == {"type": "tool", "name": "lookup"}
+
+    captured_auto, _ = run_chat(
+        provider,
+        monkeypatch,
+        messages=[{"role": "user", "content": "hello"}],
+        tools=tools,
+        tool_choice="auto",
+    )
+
+    request_json_auto = cast(dict[str, Any], captured_auto["json"])
+    assert request_json_auto["tool_choice"] == "auto"
+
+
 def test_anthropic_payload_maps_tool_messages(monkeypatch: pytest.MonkeyPatch) -> None:
     provider = build_anthropic_provider(monkeypatch)
     tool_content = [{"type": "output_text", "text": "done"}]

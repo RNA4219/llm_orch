@@ -380,7 +380,12 @@ class AnthropicProvider(BaseProvider):
         if tools is not None:
             payload["tools"] = _normalize_anthropic_tools(tools)
         if tool_choice is not None:
-            payload["tool_choice"] = _normalize_anthropic_tool_choice(tool_choice)
+            if isinstance(tool_choice, str):
+                payload["tool_choice"] = tool_choice
+            elif isinstance(tool_choice, dict):
+                payload["tool_choice"] = _normalize_anthropic_tool_choice(tool_choice)
+            else:
+                raise ValueError("Anthropic tool_choice must be a string or dictionary.")
         async with httpx.AsyncClient(timeout=60) as client:
             r = await client.post(url, headers=headers, json=payload)
             r.raise_for_status()
