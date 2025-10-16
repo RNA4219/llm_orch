@@ -40,6 +40,8 @@ def test_analyze_main_reports_no_tests_when_log_missing(tmp_path, monkeypatch):
 
     report_path.parent.mkdir(parents=True)
 
+    issue_path.write_text("stale", encoding="utf-8")
+
     monkeypatch.setattr(analyze, "LOG", tmp_path / "logs" / "missing.jsonl")
     monkeypatch.setattr(analyze, "REPORT", report_path)
     monkeypatch.setattr(analyze, "ISSUE_OUT", issue_path)
@@ -49,6 +51,41 @@ def test_analyze_main_reports_no_tests_when_log_missing(tmp_path, monkeypatch):
     report_text = report_path.read_text(encoding="utf-8")
     assert "- Total tests: 0" in report_text
     assert "- Pass rate: 未実行" in report_text
+
+    if issue_path.exists():
+        assert issue_path.read_text(encoding="utf-8") == ""
+    else:
+        assert not issue_path.exists()
+
+
+def test_analyze_main_clears_issue_suggestions_when_no_failures(tmp_path, monkeypatch):
+    log_path = tmp_path / "logs" / "test.jsonl"
+    report_path = tmp_path / "reports" / "today.md"
+    issue_path = tmp_path / "reports" / "issue_suggestions.md"
+
+    log_path.parent.mkdir(parents=True)
+    report_path.parent.mkdir(parents=True)
+
+    log_records = [
+        {"name": "sample::test_one", "duration_ms": 15, "status": "pass"},
+        {"name": "sample::test_two", "duration_ms": 30, "status": "pass"},
+    ]
+    with log_path.open("w", encoding="utf-8") as fp:
+        for record in log_records:
+            fp.write(json.dumps(record) + "\n")
+
+    issue_path.write_text("outdated", encoding="utf-8")
+
+    monkeypatch.setattr(analyze, "LOG", log_path)
+    monkeypatch.setattr(analyze, "REPORT", report_path)
+    monkeypatch.setattr(analyze, "ISSUE_OUT", issue_path)
+
+    analyze.main()
+
+    if issue_path.exists():
+        assert issue_path.read_text(encoding="utf-8") == ""
+    else:
+        assert not issue_path.exists()
 
 
 def test_analyze_main_handles_empty_log(tmp_path, monkeypatch):

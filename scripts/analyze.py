@@ -1,4 +1,4 @@
-import json, statistics, pathlib, os, datetime, math
+import json, statistics, pathlib, datetime, math, shutil
 from collections import Counter
 
 LOG = pathlib.Path("logs/test.jsonl")
@@ -71,7 +71,13 @@ def main():
             for name in set(fails):
                 f.write(f"- [ ] {name} の再現手順/前提/境界値を追加\n")
     else:
-        if ISSUE_OUT.exists() and (ISSUE_OUT.is_file() or ISSUE_OUT.is_symlink()):
-            ISSUE_OUT.unlink()
+        if ISSUE_OUT.exists():
+            if ISSUE_OUT.is_file() or ISSUE_OUT.is_symlink():
+                try:
+                    ISSUE_OUT.unlink()
+                except OSError:
+                    ISSUE_OUT.write_text("", encoding="utf-8")
+            else:
+                shutil.rmtree(ISSUE_OUT)
 if __name__ == "__main__":
     main()
