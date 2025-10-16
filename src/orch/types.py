@@ -10,6 +10,8 @@ class ChatMessage(BaseModel):
     content: Union[str, List[Dict[str, Any]], None]
     name: Optional[str] = None
     tool_call_id: Optional[str] = None
+    tool_calls: Optional[List[Dict[str, Any]]] = None
+    function_call: Optional[Dict[str, Any]] = None
 
 
 class ChatRequest(BaseModel):
