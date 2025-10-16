@@ -22,7 +22,8 @@ class BaseProvider:
         max_tokens=2048,
         *,
         tools: list[dict[str, Any]] | None = None,
-        tool_choice: dict[str, Any] | None = None,
+        tool_choice: dict[str, Any] | str | None = None,
+        function_call: dict[str, Any] | str | None = None,
     ) -> ProviderChatResponse:
         raise NotImplementedError
 
@@ -35,7 +36,8 @@ class OpenAICompatProvider(BaseProvider):
         max_tokens=2048,
         *,
         tools: list[dict[str, Any]] | None = None,
-        tool_choice: dict[str, Any] | None = None,
+        tool_choice: dict[str, Any] | str | None = None,
+        function_call: dict[str, Any] | str | None = None,
     ) -> ProviderChatResponse:
         raw_base = self.defn.base_url.strip()
         parsed = urlparse(raw_base)
@@ -99,6 +101,8 @@ class OpenAICompatProvider(BaseProvider):
             payload["tools"] = tools
         if tool_choice is not None:
             payload["tool_choice"] = tool_choice
+        if function_call is not None:
+            payload["function_call"] = function_call
         async with httpx.AsyncClient(timeout=60) as client:
             r = await client.post(url, headers=headers, json=payload)
             r.raise_for_status()
@@ -131,7 +135,8 @@ class AnthropicProvider(BaseProvider):
         max_tokens=2048,
         *,
         tools: list[dict[str, Any]] | None = None,
-        tool_choice: dict[str, Any] | None = None,
+        tool_choice: dict[str, Any] | str | None = None,
+        function_call: dict[str, Any] | str | None = None,
     ) -> ProviderChatResponse:
         base = self.defn.base_url.strip()
         parsed = urlparse(base)
@@ -327,8 +332,45 @@ class AnthropicProvider(BaseProvider):
             payload["system"] = "\n\n".join(system_messages)
         if tools is not None:
             payload["tools"] = tools
-        if tool_choice is not None:
-            payload["tool_choice"] = tool_choice
+
+        def _normalize_tool_choice(
+            raw_choice: dict[str, Any] | str | None,
+        ) -> dict[str, Any] | str | None:
+            if raw_choice is None:
+                return None
+            if isinstance(raw_choice, str):
+                normalized = raw_choice.strip()
+                if not normalized:
+                    return None
+                lowered = normalized.lower()
+                if lowered in {"auto", "any", "none"}:
+                    return {"type": lowered}
+                return {"type": "tool", "name": normalized}
+            if not isinstance(raw_choice, dict):
+                return None
+            raw_type = raw_choice.get("type")
+            if isinstance(raw_type, str) and raw_type in {"auto", "any", "none"}:
+                return {"type": raw_type}
+            if isinstance(raw_type, str) and raw_type == "tool" and isinstance(raw_choice.get("name"), str):
+                return {"type": "tool", "name": raw_choice["name"]}
+            if raw_type == "function":
+                function_payload = raw_choice.get("function")
+                if (
+                    isinstance(function_payload, dict)
+                    and isinstance(function_payload.get("name"), str)
+                    and function_payload["name"]
+                ):
+                    return {"type": "tool", "name": function_payload["name"]}
+            name_value = raw_choice.get("name")
+            if isinstance(name_value, str) and name_value:
+                return {"type": "tool", "name": name_value}
+            return None
+
+        chosen = _normalize_tool_choice(tool_choice)
+        if chosen is None:
+            chosen = _normalize_tool_choice(function_call)
+        if chosen is not None:
+            payload["tool_choice"] = chosen
         async with httpx.AsyncClient(timeout=60) as client:
             r = await client.post(url, headers=headers, json=payload)
             r.raise_for_status()
@@ -398,11 +440,13 @@ class OllamaProvider(BaseProvider):
         max_tokens=2048,
         *,
         tools: list[dict[str, Any]] | None = None,
-        tool_choice: dict[str, Any] | None = None,
+        tool_choice: dict[str, Any] | str | None = None,
+        function_call: dict[str, Any] | str | None = None,
     ) -> ProviderChatResponse:
         url = f"{self.defn.base_url.rstrip('/')}/api/chat"
         _ = tools
         _ = tool_choice
+        _ = function_call
         payload = {"model": self.defn.model or model, "messages": messages, "stream": False, "options": {"temperature": temperature, "num_predict": max_tokens}}
         async with httpx.AsyncClient(timeout=120) as client:
             r = await client.post(url, json=payload)
@@ -431,10 +475,12 @@ class DummyProvider(BaseProvider):
         *,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: dict[str, Any] | None = None,
+        function_call: dict[str, Any] | str | None = None,
     ) -> ProviderChatResponse:
         # simple echo-ish behavior for tests
         _ = tools
         _ = tool_choice
+        _ = function_call
         last_user = next((m["content"] for m in reversed(messages) if m["role"]=="user"), "ping")
         return ProviderChatResponse(
             status_code=200,
