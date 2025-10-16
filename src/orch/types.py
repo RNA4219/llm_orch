@@ -30,6 +30,7 @@ class ProviderChatResponse(BaseModel):
     content: str | None = None
     finish_reason: str | None = None
     tool_calls: list[dict[str, Any]] | None = None
+    function_call: dict[str, Any] | None = None
     usage_prompt_tokens: Optional[int] = 0
     usage_completion_tokens: Optional[int] = 0
 
@@ -52,6 +53,7 @@ def chat_response_from_provider(p: ProviderChatResponse) -> dict[str, Any]:
                         "role": "assistant",
                         "content": p.content,
                         "tool_calls": p.tool_calls,
+                        "function_call": p.function_call,
                     }.items()
                     if value is not None
                 },
