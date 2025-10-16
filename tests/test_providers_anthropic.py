@@ -56,6 +56,55 @@ def run_chat(
     return captured, response
 
 
+def test_anthropic_chat_normalizes_structured_messages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider_def = ProviderDef(
+        name="anthropic",
+        type="anthropic",
+        base_url="https://api.anthropic.com",
+        model="claude-3-sonnet",
+        auth_env="ANTHROPIC_API_KEY",
+        rpm=60,
+        concurrency=1,
+    )
+    provider = AnthropicProvider(provider_def)
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "secret")
+
+    messages: list[dict[str, Any]] = [
+        {
+            "role": "system",
+            "content": [
+                {"type": "text", "text": "alpha"},
+                {"type": "text", "text": "beta"},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "hello"},
+                {"type": "text", "text": "world"},
+            ],
+        },
+    ]
+
+    captured, response = run_chat(provider, monkeypatch, messages)
+
+    request_json = cast(dict[str, Any], captured["json"])
+    assert request_json["system"] == "alphabeta"
+
+    messages_payload = cast(list[dict[str, Any]], request_json["messages"])
+    assert messages_payload == [
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": "helloworld"}],
+        }
+    ]
+
+    assert response.content == "ok"
+
+
 def test_anthropic_payload_maps_openai_messages(monkeypatch: pytest.MonkeyPatch) -> None:
     provider_def = ProviderDef(
         name="anthropic",

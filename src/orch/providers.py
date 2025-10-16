@@ -144,7 +144,9 @@ class AnthropicProvider(BaseProvider):
                 parts: list[str] = []
                 for block in raw_content:
                     if not isinstance(block, dict):
-                        raise ValueError("Anthropic messages must use dict blocks when providing lists of content.")
+                        raise ValueError(
+                            "Anthropic content lists must contain dict blocks with 'type' and 'text'."
+                        )
                     block_type = block.get("type")
                     if block_type != "text":
                         raise ValueError(
@@ -152,20 +154,26 @@ class AnthropicProvider(BaseProvider):
                         )
                     block_text = block.get("text")
                     if not isinstance(block_text, str):
-                        raise ValueError("Anthropic text blocks must include a string 'text' value.")
+                        raise ValueError("Anthropic text blocks must include string 'text' values.")
                     parts.append(block_text)
                 return "".join(parts)
             raise ValueError("Anthropic messages must provide string or list content values.")
 
-        system_messages = [normalize_text_content(m["content"]) for m in messages if m["role"] == "system"]
+        def extract_text(message: dict[str, Any]) -> str:
+            if "content" not in message:
+                raise ValueError("Anthropic messages must include a 'content' field.")
+            return normalize_text_content(message["content"])
+
+        system_messages = [extract_text(m) for m in messages if m.get("role") == "system"]
         mapped: list[dict[str, Any]] = []
         for message in messages:
-            if message["role"] not in ("user", "assistant"):
+            role = message.get("role")
+            if role not in ("user", "assistant"):
                 continue
-            text_content = normalize_text_content(message["content"])
+            text_content = extract_text(message)
             mapped.append(
                 {
-                    "role": message["role"],
+                    "role": role,
                     "content": [{"type": "text", "text": text_content}],
                 }
             )
