@@ -16,7 +16,7 @@ class ChatRequest(BaseModel):
 class ProviderChatResponse(BaseModel):
     status_code: int = 200
     model: str
-    content: str | None
+    content: str | None = None
     finish_reason: str | None = None
     tool_calls: list[dict[str, Any]] | None = None
     usage_prompt_tokens: Optional[int] = 0

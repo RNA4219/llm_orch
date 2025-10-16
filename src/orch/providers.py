@@ -166,12 +166,16 @@ class AnthropicProvider(BaseProvider):
             for block in content_blocks
             if isinstance(block, dict) and block.get("type") == "text"
         )
+        finish_reason = data.get("stop_reason")
+        tool_calls = data.get("tool_calls")
         usage = data.get("usage") or {}
         response_model = data.get("model") or self.defn.model or model
         return ProviderChatResponse(
             status_code=r.status_code,
             model=response_model,
             content=content,
+            finish_reason=finish_reason,
+            tool_calls=tool_calls if isinstance(tool_calls, list) else None,
             usage_prompt_tokens=usage.get("input_tokens", 0),
             usage_completion_tokens=usage.get("output_tokens", 0),
         )
@@ -185,14 +189,28 @@ class OllamaProvider(BaseProvider):
             r.raise_for_status()
             data = r.json()
         # Ollama returns {"message":{"content":...}, "done":true, ...}
-        content = (data.get("message") or {}).get("content", "")
-        return ProviderChatResponse(status_code=r.status_code, model=self.defn.model or model, content=content)
+        message = data.get("message") or {}
+        content = message.get("content")
+        finish_reason = data.get("finish_reason") or data.get("done_reason")
+        tool_calls = message.get("tool_calls")
+        return ProviderChatResponse(
+            status_code=r.status_code,
+            model=self.defn.model or model,
+            content=content,
+            finish_reason=finish_reason,
+            tool_calls=tool_calls if isinstance(tool_calls, list) else None,
+        )
 
 class DummyProvider(BaseProvider):
     async def chat(self, model: str, messages: List[dict[str, str]], temperature=0.2, max_tokens=2048) -> ProviderChatResponse:
         # simple echo-ish behavior for tests
         last_user = next((m["content"] for m in reversed(messages) if m["role"]=="user"), "ping")
-        return ProviderChatResponse(status_code=200, model="dummy", content=f"dummy:{last_user}")
+        return ProviderChatResponse(
+            status_code=200,
+            model="dummy",
+            content=f"dummy:{last_user}",
+            finish_reason="stop",
+        )
 
 class ProviderRegistry:
     _PROVIDER_FACTORIES: dict[str, type[BaseProvider]] = {

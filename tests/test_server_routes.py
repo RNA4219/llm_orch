@@ -135,6 +135,56 @@ def test_chat_accepts_tool_role_messages(
     assert records[-1]["status"] == 200
 
 
+def test_chat_response_propagates_finish_reason_and_tool_calls(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+    capture_metric_records(server_module, monkeypatch)
+
+    from src.orch.types import ProviderChatResponse
+
+    tool_calls = [
+        {
+            "id": "call_123",
+            "type": "function",
+            "function": {"name": "lookup", "arguments": "{}"},
+        }
+    ]
+    provider_chat = AsyncMock(
+        return_value=ProviderChatResponse(
+            status_code=200,
+            model="dummy",
+            content=None,
+            finish_reason="tool_calls",
+            tool_calls=tool_calls,
+        )
+    )
+
+    class MockProvider:
+        model = "dummy"
+
+        def __init__(self) -> None:
+            self.chat = provider_chat
+
+    monkeypatch.setitem(server_module.providers.providers, "dummy", MockProvider())
+
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "dummy",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["choices"][0]["finish_reason"] == "tool_calls"
+    assert body["choices"][0]["message"]["tool_calls"] == tool_calls
+    assert "content" not in body["choices"][0]["message"]
+
+
 def test_chat_rejects_stream_requests(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
