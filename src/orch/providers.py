@@ -13,11 +13,11 @@ class BaseProvider:
         self.defn = defn
         self.model = defn.model
 
-    async def chat(self, model: str, messages: List[dict[str, str]], temperature=0.2, max_tokens=2048) -> ProviderChatResponse:
+    async def chat(self, model: str, messages: List[dict[str, Any]], temperature=0.2, max_tokens=2048) -> ProviderChatResponse:
         raise NotImplementedError
 
 class OpenAICompatProvider(BaseProvider):
-    async def chat(self, model: str, messages: List[dict[str, str]], temperature=0.2, max_tokens=2048) -> ProviderChatResponse:
+    async def chat(self, model: str, messages: List[dict[str, Any]], temperature=0.2, max_tokens=2048) -> ProviderChatResponse:
         raw_base = self.defn.base_url.strip()
         parsed = urlparse(raw_base)
         path = parsed.path or ""
@@ -98,7 +98,7 @@ class OpenAICompatProvider(BaseProvider):
         )
 
 class AnthropicProvider(BaseProvider):
-    async def chat(self, model: str, messages: List[dict[str, str]], temperature=0.2, max_tokens=2048) -> ProviderChatResponse:
+    async def chat(self, model: str, messages: List[dict[str, Any]], temperature=0.2, max_tokens=2048) -> ProviderChatResponse:
         base = self.defn.base_url.strip()
         parsed = urlparse(base)
         path = parsed.path or ""
@@ -177,7 +177,7 @@ class AnthropicProvider(BaseProvider):
         )
 
 class OllamaProvider(BaseProvider):
-    async def chat(self, model: str, messages: List[dict[str, str]], temperature=0.2, max_tokens=2048) -> ProviderChatResponse:
+    async def chat(self, model: str, messages: List[dict[str, Any]], temperature=0.2, max_tokens=2048) -> ProviderChatResponse:
         url = f"{self.defn.base_url.rstrip('/')}/api/chat"
         payload = {"model": self.defn.model or model, "messages": messages, "stream": False, "options": {"temperature": temperature, "num_predict": max_tokens}}
         async with httpx.AsyncClient(timeout=120) as client:
@@ -189,7 +189,7 @@ class OllamaProvider(BaseProvider):
         return ProviderChatResponse(status_code=r.status_code, model=self.defn.model or model, content=content)
 
 class DummyProvider(BaseProvider):
-    async def chat(self, model: str, messages: List[dict[str, str]], temperature=0.2, max_tokens=2048) -> ProviderChatResponse:
+    async def chat(self, model: str, messages: List[dict[str, Any]], temperature=0.2, max_tokens=2048) -> ProviderChatResponse:
         # simple echo-ish behavior for tests
         last_user = next((m["content"] for m in reversed(messages) if m["role"]=="user"), "ping")
         return ProviderChatResponse(status_code=200, model="dummy", content=f"dummy:{last_user}")
