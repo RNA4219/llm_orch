@@ -144,6 +144,7 @@ async def chat_completions(req: Request, body: ChatRequest):
         message.model_dump(mode="json", exclude_none=True)
         for message in body.messages
     ]
+    function_call = getattr(body, "function_call", None)
     if "temperature" in body.model_fields_set and body.temperature is not None:
         temperature = body.temperature
     else:
@@ -171,6 +172,7 @@ async def chat_completions(req: Request, body: ChatRequest):
                         max_tokens=max_tokens,
                         tools=body.tools,
                         tool_choice=body.tool_choice,
+                        function_call=function_call,
                     )
                 except Exception as exc:
                     last_err = str(exc)

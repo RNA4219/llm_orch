@@ -21,6 +21,7 @@ def _run_chat_and_capture(
     *,
     tools: list[dict[str, Any]] | None = None,
     tool_choice: dict[str, Any] | None = None,
+    function_call: dict[str, Any] | str | None = None,
 ) -> tuple[dict[str, Any], Any]:
     provider = OpenAICompatProvider(provider_def)
     monkeypatch.setenv(env_name, "secret")
@@ -59,6 +60,7 @@ def _run_chat_and_capture(
             messages=[{"role": "user", "content": "ping"}],
             tools=tools,
             tool_choice=tool_choice,
+            function_call=function_call,
         )
 
     response = asyncio.run(run_chat())
@@ -217,3 +219,29 @@ def test_openai_compat_includes_tools_in_payload(monkeypatch: pytest.MonkeyPatch
     request_json = cast(dict[str, Any], captured["json"])
     assert request_json["tools"] == tools
     assert request_json["tool_choice"] == tool_choice
+
+
+def test_openai_compat_includes_function_call_in_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider_def = ProviderDef(
+        name="openai",
+        type="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-4o",
+        auth_env="OPENAI_API_KEY",
+        rpm=60,
+        concurrency=1,
+    )
+
+    function_call = {"name": "lookup", "arguments": "{}"}
+
+    captured, _ = _run_chat_and_capture(
+        provider_def,
+        "OPENAI_API_KEY",
+        monkeypatch,
+        function_call=function_call,
+    )
+
+    request_json = cast(dict[str, Any], captured["json"])
+    assert request_json["function_call"] == function_call

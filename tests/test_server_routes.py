@@ -1350,11 +1350,13 @@ def test_chat_retries_success_after_transient_failures(
             max_tokens: int = 2048,
             tools: list[dict[str, Any]] | None = None,
             tool_choice: dict[str, Any] | None = None,
+            function_call: dict[str, Any] | None = None,
         ) -> "ProviderChatResponse":
             from src.orch.types import ProviderChatResponse
 
             _ = tools
             _ = tool_choice
+            _ = function_call
             self.calls += 1
             if self.calls < 3:
                 raise RuntimeError(f"fail-{self.calls}")
