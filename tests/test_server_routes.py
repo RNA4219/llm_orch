@@ -247,6 +247,49 @@ def test_chat_response_propagates_finish_reason_and_tool_calls(
     assert "content" not in body["choices"][0]["message"]
 
 
+def test_chat_response_propagates_function_call(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+    capture_metric_records(server_module, monkeypatch)
+
+    from src.orch.types import ProviderChatResponse
+
+    function_call = {"name": "lookup", "arguments": "{}"}
+    provider_chat = AsyncMock(
+        return_value=ProviderChatResponse(
+            status_code=200,
+            model="dummy",
+            content=None,
+            function_call=function_call,
+        )
+    )
+
+    class MockProvider:
+        model = "dummy"
+
+        def __init__(self) -> None:
+            self.chat = provider_chat
+
+    monkeypatch.setitem(server_module.providers.providers, "dummy", MockProvider())
+
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "dummy",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    message = body["choices"][0]["message"]
+    assert message["function_call"] == function_call
+    assert "content" not in message
+
+
 def test_chat_rejects_stream_requests(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
