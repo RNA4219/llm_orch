@@ -22,6 +22,8 @@ class ChatRequest(BaseModel):
     temperature: Optional[float] = 0.2
     max_tokens: Optional[int] = 2048
     stream: Optional[bool] = False
+    tools: Optional[List[Dict[str, Any]]] = None
+    tool_choice: Optional[Dict[str, Any]] = None
 
 
 class ProviderChatResponse(BaseModel):

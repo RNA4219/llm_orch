@@ -18,6 +18,9 @@ def _run_chat_and_capture(
     provider_def: ProviderDef,
     env_name: str,
     monkeypatch: pytest.MonkeyPatch,
+    *,
+    tools: list[dict[str, Any]] | None = None,
+    tool_choice: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], Any]:
     provider = OpenAICompatProvider(provider_def)
     monkeypatch.setenv(env_name, "secret")
@@ -54,6 +57,8 @@ def _run_chat_and_capture(
         return await provider.chat(
             model=provider_def.model,
             messages=[{"role": "user", "content": "ping"}],
+            tools=tools,
+            tool_choice=tool_choice,
         )
 
     response = asyncio.run(run_chat())
@@ -177,3 +182,38 @@ def test_openai_compat_async_client_post_receives_query_string(
         captured["url"]
         == "https://example.openai.azure.com/openai/deployments/foo/chat/completions?api-version=2024-02-01"
     )
+
+
+def test_openai_compat_includes_tools_in_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider_def = ProviderDef(
+        name="openai",
+        type="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-4o",
+        auth_env="OPENAI_API_KEY",
+        rpm=60,
+        concurrency=1,
+    )
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "lookup",
+                "description": "Lookup data",
+                "parameters": {"type": "object", "properties": {"q": {"type": "string"}}},
+            },
+        }
+    ]
+    tool_choice = {"type": "function", "function": {"name": "lookup"}}
+
+    captured, _ = _run_chat_and_capture(
+        provider_def,
+        "OPENAI_API_KEY",
+        monkeypatch,
+        tools=tools,
+        tool_choice=tool_choice,
+    )
+
+    request_json = cast(dict[str, Any], captured["json"])
+    assert request_json["tools"] == tools
+    assert request_json["tool_choice"] == tool_choice
