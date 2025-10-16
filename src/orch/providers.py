@@ -153,13 +153,15 @@ class AnthropicProvider(BaseProvider):
                             "Anthropic content lists must contain dict blocks with 'type' and 'text'."
                         )
                     block_type = block.get("type")
-                    if block_type != "text":
+                    if not isinstance(block_type, str) or not block_type:
                         raise ValueError(
-                            f"Unsupported Anthropic content block type: {block_type}. Only 'text' is allowed."
+                            "Anthropic content blocks require a non-empty string 'type'."
                         )
                     block_text = block.get("text")
                     if not isinstance(block_text, str):
-                        raise ValueError("Anthropic text blocks must include string 'text' values.")
+                        raise ValueError(
+                            "Anthropic text-like blocks must include string 'text' values."
+                        )
                     parts.append(block_text)
                 return "".join(parts)
             raise ValueError("Anthropic messages must provide string or list content values.")
@@ -204,11 +206,27 @@ class AnthropicProvider(BaseProvider):
                 raise ValueError("Anthropic tool messages require a 'tool_call_id'.")
             if "content" not in message:
                 raise ValueError("Anthropic tool messages must include 'content'.")
-            result_text = normalize_text_content(message["content"])
+            raw_content = message["content"]
+            if isinstance(raw_content, list):
+                normalized_blocks: list[dict[str, Any]] = []
+                for block in raw_content:
+                    if not isinstance(block, dict):
+                        raise ValueError(
+                            "Anthropic tool result content lists must contain block dictionaries."
+                        )
+                    block_type = block.get("type")
+                    if not isinstance(block_type, str) or not block_type:
+                        raise ValueError(
+                            "Anthropic tool result blocks require a non-empty string 'type'."
+                        )
+                    normalized_blocks.append(block)
+                result_content: str | list[dict[str, Any]] = normalized_blocks
+            else:
+                result_content = normalize_text_content(raw_content)
             return {
                 "type": "tool_result",
                 "tool_use_id": tool_call_id,
-                "content": result_text,
+                "content": result_content,
             }
 
         system_messages: list[str] = []

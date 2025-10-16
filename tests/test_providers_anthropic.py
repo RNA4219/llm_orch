@@ -163,6 +163,46 @@ def test_anthropic_payload_maps_tool_messages(monkeypatch: pytest.MonkeyPatch) -
     assert tool_messages[1]["content"][0]["content"] == tool_content
 
 
+def test_anthropic_tool_message_accepts_structured_content(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = build_anthropic_provider(monkeypatch)
+    tool_content = [{"type": "output_text", "text": "done"}]
+    messages: list[dict[str, Any]] = [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "call", "tool_calls": []},
+        {"role": "tool", "tool_call_id": "call-1", "content": tool_content},
+    ]
+
+    response_payload = {
+        "content": [
+            {"type": "tool_result", "tool_use_id": "call-1", "content": tool_content}
+        ]
+    }
+
+    captured, response = run_chat(
+        provider,
+        monkeypatch,
+        messages,
+        response_payload=response_payload,
+    )
+
+    request_json = cast(dict[str, Any], captured["json"])
+    tool_messages = cast(list[dict[str, Any]], request_json["messages"])
+
+    assert tool_messages[-1] == {
+        "role": "user",
+        "content": [
+            {
+                "type": "tool_result",
+                "tool_use_id": "call-1",
+                "content": tool_content,
+            }
+        ],
+    }
+    assert response.content == "done"
+
+
 def test_anthropic_payload_errors_on_tool_without_id(monkeypatch: pytest.MonkeyPatch) -> None:
     provider = build_anthropic_provider(monkeypatch)
     messages: list[dict[str, Any]] = [
