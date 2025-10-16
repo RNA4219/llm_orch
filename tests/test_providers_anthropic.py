@@ -18,7 +18,7 @@ from src.orch.types import ProviderChatResponse
 def run_chat(
     provider: AnthropicProvider,
     monkeypatch: pytest.MonkeyPatch,
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     request_model: str = "claude-3-sonnet",
 ) -> tuple[dict[str, Any], ProviderChatResponse]:
     captured: dict[str, Any] = {}
@@ -140,6 +140,42 @@ def test_anthropic_payload_maps_openai_messages(monkeypatch: pytest.MonkeyPatch)
     assert response.content == "ok"
     assert response.usage_prompt_tokens == 1
     assert response.usage_completion_tokens == 2
+
+
+def test_anthropic_payload_maps_tool_messages(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = build_anthropic_provider(monkeypatch)
+    tool_content = [{"type": "output_text", "text": "done"}]
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": "you are helpful"},
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "calling tool", "tool_calls": []},
+        {"role": "tool", "tool_call_id": "call-1", "content": "completed"},
+        {"role": "tool", "tool_call_id": "call-2", "content": tool_content},
+    ]
+
+    captured, _ = run_chat(provider, monkeypatch, messages)
+
+    request_json = cast(dict[str, Any], captured["json"])
+    messages_payload = cast(list[dict[str, Any]], request_json["messages"])
+
+    assert messages_payload[0]["content"][0]["text"] == "hello"
+    assert messages_payload[1]["role"] == "assistant"
+    tool_messages = messages_payload[-2:]
+    assert [m["role"] for m in tool_messages] == ["user", "user"]
+    assert [m["content"][0]["tool_use_id"] for m in tool_messages] == ["call-1", "call-2"]
+    assert tool_messages[0]["content"][0]["content"] == [{"type": "text", "text": "completed"}]
+    assert tool_messages[1]["content"][0]["content"] == tool_content
+
+
+def test_anthropic_payload_errors_on_tool_without_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = build_anthropic_provider(monkeypatch)
+    messages: list[dict[str, Any]] = [
+        {"role": "user", "content": "hello"},
+        {"role": "tool", "content": "no id"},
+    ]
+
+    with pytest.raises(ValueError, match="tool_call_id"):
+        run_chat(provider, monkeypatch, messages)
 
 
 def test_anthropic_payload_normalizes_structured_content(
