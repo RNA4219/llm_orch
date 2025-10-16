@@ -34,6 +34,23 @@ def test_analyze_main_generates_report(tmp_path, monkeypatch):
     assert report_path.exists(), "Report file should be generated"
 
 
+def test_analyze_main_reports_no_tests_when_log_missing(tmp_path, monkeypatch):
+    report_path = tmp_path / "reports" / "today.md"
+    issue_path = tmp_path / "reports" / "issue_suggestions.md"
+
+    report_path.parent.mkdir(parents=True)
+
+    monkeypatch.setattr(analyze, "LOG", tmp_path / "logs" / "missing.jsonl")
+    monkeypatch.setattr(analyze, "REPORT", report_path)
+    monkeypatch.setattr(analyze, "ISSUE_OUT", issue_path)
+
+    analyze.main()
+
+    report_text = report_path.read_text(encoding="utf-8")
+    assert "- Total tests: 0" in report_text
+    assert "- Pass rate: 未実行" in report_text
+
+
 def test_analyze_main_handles_empty_log(tmp_path, monkeypatch):
     log_path = tmp_path / "logs" / "empty.jsonl"
     report_path = tmp_path / "reports" / "today.md"
@@ -50,7 +67,7 @@ def test_analyze_main_handles_empty_log(tmp_path, monkeypatch):
     analyze.main()
 
     report_text = report_path.read_text(encoding="utf-8")
-    assert "- Pass rate: 0.00%" in report_text
+    assert "- Pass rate: 未実行" in report_text
 
 
 def test_analyze_main_single_record_p95(tmp_path, monkeypatch):

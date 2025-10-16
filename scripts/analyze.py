@@ -48,7 +48,7 @@ def main():
     tests, durs, fails = load_results()
     total = len(tests)
     if total == 0:
-        pass_rate_text = "0.00%"
+        pass_rate_text = "未実行"
     else:
         pass_rate = (total - len(fails)) / total
         pass_rate_text = f"{pass_rate:.2%}"
