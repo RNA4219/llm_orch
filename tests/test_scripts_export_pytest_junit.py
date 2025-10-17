@@ -192,7 +192,7 @@ def test_convert_junit_to_jsonl_handles_skipped_and_errors(tmp_path: Path) -> No
             "details": "Traceback",
             "message": "boom",
             "name": "test_error",
-            "status": "error",
+            "status": "fail",
             "duration_ms": 1,
             "type": "RuntimeError",
         },
@@ -210,4 +210,32 @@ def test_convert_junit_to_jsonl_handles_skipped_and_errors(tmp_path: Path) -> No
             "status": "passed",
             "duration_ms": 10,
         },
+    ]
+
+
+def test_convert_junit_to_jsonl_normalizes_error_status(tmp_path: Path) -> None:
+    xml_path = tmp_path / "pytest.xml"
+    output_path = tmp_path / "out.jsonl"
+    write_file(
+        xml_path,
+        """
+        <testsuite>
+            <testcase classname="pkg.TestCase" name="test_error">
+                <error message="boom">Traceback</error>
+            </testcase>
+        </testsuite>
+        """,
+    )
+
+    convert_junit_to_jsonl(xml_path, output_path)
+
+    records = read_json_lines(output_path)
+    assert records == [
+        {
+            "classname": "pkg.TestCase",
+            "details": "Traceback",
+            "message": "boom",
+            "name": "test_error",
+            "status": "fail",
+        }
     ]
