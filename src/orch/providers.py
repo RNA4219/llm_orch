@@ -137,6 +137,10 @@ class OpenAICompatProvider(BaseProvider):
         path = parsed.path or ""
         normalized_path = path.rstrip("/")
         path_segments = [segment for segment in normalized_path.split("/") if segment]
+        has_chat_completions_suffix = bool(
+            len(path_segments) >= 2 and path_segments[-2:] == ["chat", "completions"]
+        )
+        segments_for_evaluation = path_segments[:-2] if has_chat_completions_suffix else path_segments
         hostname = (parsed.hostname or "").lower()
         azure_compat_suffixes = (
             "openai.azure.com",
@@ -162,19 +166,21 @@ class OpenAICompatProvider(BaseProvider):
             suffix = lowered[1:]
             return bool(suffix) and suffix[0].isdigit()
 
-        has_openai_segment = any(segment == "openai" for segment in path_segments)
-        openai_is_last_segment = bool(path_segments and path_segments[-1] == "openai")
+        has_openai_segment = any(segment == "openai" for segment in segments_for_evaluation)
+        openai_is_last_segment = bool(
+            segments_for_evaluation and segments_for_evaluation[-1] == "openai"
+        )
 
         should_append_v1 = True
 
-        if not normalized_path:
+        if not segments_for_evaluation:
             should_append_v1 = is_openai_host
         elif has_openai_segment and not openai_is_last_segment:
             should_append_v1 = False
-        elif path_segments and is_version_segment(path_segments[-1]):
+        elif segments_for_evaluation and is_version_segment(segments_for_evaluation[-1]):
             should_append_v1 = False
 
-        normalized_segments = list(path_segments)
+        normalized_segments = list(segments_for_evaluation)
         if should_append_v1:
             normalized_segments.append("v1")
         normalized_segments.extend(["chat", "completions"])
