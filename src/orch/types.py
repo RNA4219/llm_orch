@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ChatMessage(BaseModel):
@@ -40,11 +40,22 @@ class ProviderChatResponse(BaseModel):
     function_call: dict[str, Any] | None = None
     usage_prompt_tokens: Optional[int] = 0
     usage_completion_tokens: Optional[int] = 0
+    additional_message_fields: dict[str, Any] = Field(default_factory=dict)
 
 
 def chat_response_from_provider(p: ProviderChatResponse) -> dict[str, Any]:
     import time
     import uuid
+
+    message_payload: dict[str, Any] = {"role": "assistant"}
+    if p.additional_message_fields:
+        message_payload.update(p.additional_message_fields)
+    if p.content is not None:
+        message_payload["content"] = p.content
+    if p.tool_calls is not None:
+        message_payload["tool_calls"] = p.tool_calls
+    if p.function_call is not None:
+        message_payload["function_call"] = p.function_call
 
     return {
         "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
@@ -54,16 +65,7 @@ def chat_response_from_provider(p: ProviderChatResponse) -> dict[str, Any]:
         "choices": [
             {
                 "index": 0,
-                "message": {
-                    key: value
-                    for key, value in {
-                        "role": "assistant",
-                        "content": p.content,
-                        "tool_calls": p.tool_calls,
-                        "function_call": p.function_call,
-                    }.items()
-                    if value is not None
-                },
+                "message": message_payload,
                 "finish_reason": p.finish_reason or "stop",
             }
         ],

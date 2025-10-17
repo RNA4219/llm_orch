@@ -224,6 +224,18 @@ class OpenAICompatProvider(BaseProvider):
         finish_reason = choice.get("finish_reason")
         tool_calls = message.get("tool_calls")
         function_call = message.get("function_call")
+        additional_message_fields = {
+            key: value
+            for key, value in message.items()
+            if key
+            not in {
+                "role",
+                "content",
+                "tool_calls",
+                "function_call",
+            }
+            and value is not None
+        }
         usage = data.get("usage") or {}
         response_model = data.get("model") or self.defn.model or model
         return ProviderChatResponse(
@@ -235,6 +247,7 @@ class OpenAICompatProvider(BaseProvider):
             function_call=function_call,
             usage_prompt_tokens=usage.get("prompt_tokens", 0),
             usage_completion_tokens=usage.get("completion_tokens", 0),
+            additional_message_fields=additional_message_fields,
         )
 
 class AnthropicProvider(BaseProvider):
