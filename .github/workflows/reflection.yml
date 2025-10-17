@@ -21,7 +21,6 @@ jobs:
         with:
           name: test-logs
           path: logs
-          if-no-artifact-found: warn
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
