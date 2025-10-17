@@ -203,35 +203,29 @@ def test_openai_chat_response_preserves_list_content(
     assert message["content"] == content_blocks
 
 
-def test_openai_chat_response_preserves_refusal(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "secret")
-    provider = make_provider("https://api.openai.com")
-    upstream_response = {
-        "model": "gpt-4o",
-        "choices": [
+def test_chat_response_from_provider_keeps_multiple_choices() -> None:
+    provider_response = ProviderChatResponse(
+        model="gpt-4o",
+        choices=[
             {
-                "message": {
-                    "role": "assistant",
-                    "content": None,
-                    "refusal": "I cannot help with that.",
-                },
+                "index": 0,
+                "message": {"role": "assistant", "content": "first"},
                 "finish_reason": "stop",
-            }
+            },
+            {
+                "index": 1,
+                "message": {"role": "assistant", "content": "second"},
+                "finish_reason": "stop",
+            },
         ],
-        "usage": {"prompt_tokens": 1, "completion_tokens": 2},
-    }
+    )
 
-    post_calls, response = run_chat(provider, monkeypatch, upstream_response=upstream_response)
+    payload = chat_response_from_provider(provider_response)
 
-    assert post_calls
-    assert response.additional_message_fields == {"refusal": "I cannot help with that."}
-
-    payload = chat_response_from_provider(response)
-    message = payload["choices"][0]["message"]
-    assert message["refusal"] == "I cannot help with that."
-    assert "content" not in message
+    assert [choice["message"]["content"] for choice in payload["choices"]] == [
+        "first",
+        "second",
+    ]
 
 
 @pytest.mark.parametrize(

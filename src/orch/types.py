@@ -40,35 +40,68 @@ class ProviderChatResponse(BaseModel):
     function_call: dict[str, Any] | None = None
     usage_prompt_tokens: Optional[int] = 0
     usage_completion_tokens: Optional[int] = 0
-    additional_message_fields: dict[str, Any] = Field(default_factory=dict)
+    choices: list[dict[str, Any]] | None = None
 
 
 def chat_response_from_provider(p: ProviderChatResponse) -> dict[str, Any]:
     import time
     import uuid
 
-    message_payload: dict[str, Any] = {"role": "assistant"}
-    if p.additional_message_fields:
-        message_payload.update(p.additional_message_fields)
-    if p.content is not None:
-        message_payload["content"] = p.content
-    if p.tool_calls is not None:
-        message_payload["tool_calls"] = p.tool_calls
-    if p.function_call is not None:
-        message_payload["function_call"] = p.function_call
+    def normalize_message(raw_message: dict[str, Any] | None) -> dict[str, Any]:
+        if raw_message is None:
+            return {"role": "assistant"}
+        normalized = {
+            key: value for key, value in raw_message.items() if value is not None
+        }
+        if "role" not in normalized:
+            normalized["role"] = "assistant"
+        return normalized
+
+    def normalize_choice(raw_choice: dict[str, Any], index: int) -> dict[str, Any]:
+        choice_payload = dict(raw_choice)
+        choice_payload["index"] = choice_payload.get("index", index)
+        raw_message = choice_payload.get("message")
+        if isinstance(raw_message, dict):
+            normalized_message = normalize_message(raw_message)
+        elif raw_message is None:
+            normalized_message = {"role": "assistant"}
+        else:
+            normalized_message = normalize_message({"content": raw_message})
+        choice_payload["message"] = normalized_message
+        if choice_payload.get("finish_reason") is None:
+            choice_payload["finish_reason"] = "stop"
+        return choice_payload
+
+    fallback_message = {
+        key: value
+        for key, value in {
+            "role": "assistant",
+            "content": p.content,
+            "tool_calls": p.tool_calls,
+            "function_call": p.function_call,
+        }.items()
+        if value is not None
+    }
+    choices_source = p.choices or [
+        {
+            "index": 0,
+            "message": fallback_message,
+            "finish_reason": p.finish_reason or "stop",
+        }
+    ]
+    normalized_choices = [
+        normalize_choice(
+            choice if isinstance(choice, dict) else {"message": choice}, index
+        )
+        for index, choice in enumerate(choices_source)
+    ]
 
     return {
         "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
         "object": "chat.completion",
         "created": int(time.time()),
         "model": p.model,
-        "choices": [
-            {
-                "index": 0,
-                "message": message_payload,
-                "finish_reason": p.finish_reason or "stop",
-            }
-        ],
+        "choices": normalized_choices,
         "usage": {
             "prompt_tokens": p.usage_prompt_tokens or 0,
             "completion_tokens": p.usage_completion_tokens or 0,
