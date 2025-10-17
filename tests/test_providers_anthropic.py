@@ -409,6 +409,50 @@ def test_anthropic_tool_message_accepts_structured_content(
     assert response.content == "done"
 
 
+@pytest.mark.parametrize(
+    ("stop_reason", "expected_finish_reason"),
+    [
+        ("tool_use", "tool_calls"),
+        ("max_tokens", "length"),
+        ("end_turn", "stop"),
+        ("stop_sequence", "stop"),
+    ],
+)
+def test_anthropic_chat_normalizes_stop_reason(
+    monkeypatch: pytest.MonkeyPatch,
+    stop_reason: str,
+    expected_finish_reason: str,
+) -> None:
+    provider = build_anthropic_provider(monkeypatch)
+
+    response_payload: dict[str, Any] = {
+        "content": [],
+        "stop_reason": stop_reason,
+        "usage": {"input_tokens": 1, "output_tokens": 2},
+    }
+    if stop_reason == "tool_use":
+        response_payload["content"] = [
+            {
+                "type": "tool_use",
+                "id": "call-1",
+                "name": "lookup",
+                "input": {"q": "weather"},
+            }
+        ]
+
+    _, response = run_chat(
+        provider,
+        monkeypatch,
+        messages=[{"role": "user", "content": "hello"}],
+        response_payload=response_payload,
+    )
+
+    assert response.finish_reason == expected_finish_reason
+    if stop_reason == "tool_use":
+        assert response.tool_calls is not None
+        assert response.tool_calls[0]["function"]["name"] == "lookup"
+
+
 def test_anthropic_tool_message_wraps_string_content(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
