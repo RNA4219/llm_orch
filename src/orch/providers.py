@@ -218,10 +218,11 @@ class OpenAICompatProvider(BaseProvider):
             r = await client.post(url, headers=headers, json=payload)
             r.raise_for_status()
             data = r.json()
-        choice = (data.get("choices") or [{}])[0]
-        message = choice.get("message") or {}
+        choices = data.get("choices") or []
+        first_choice = choices[0] if choices else {}
+        message = first_choice.get("message") or {}
         content = message.get("content")
-        finish_reason = choice.get("finish_reason")
+        finish_reason = first_choice.get("finish_reason")
         tool_calls = message.get("tool_calls")
         function_call = message.get("function_call")
         usage = data.get("usage") or {}
@@ -235,6 +236,7 @@ class OpenAICompatProvider(BaseProvider):
             function_call=function_call,
             usage_prompt_tokens=usage.get("prompt_tokens", 0),
             usage_completion_tokens=usage.get("completion_tokens", 0),
+            choices=choices or None,
         )
 
 class AnthropicProvider(BaseProvider):

@@ -203,6 +203,31 @@ def test_openai_chat_response_preserves_list_content(
     assert message["content"] == content_blocks
 
 
+def test_chat_response_from_provider_keeps_multiple_choices() -> None:
+    provider_response = ProviderChatResponse(
+        model="gpt-4o",
+        choices=[
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": "first"},
+                "finish_reason": "stop",
+            },
+            {
+                "index": 1,
+                "message": {"role": "assistant", "content": "second"},
+                "finish_reason": "stop",
+            },
+        ],
+    )
+
+    payload = chat_response_from_provider(provider_response)
+
+    assert [choice["message"]["content"] for choice in payload["choices"]] == [
+        "first",
+        "second",
+    ]
+
+
 @pytest.mark.parametrize(
     "base_url",
     [
