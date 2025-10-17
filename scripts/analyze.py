@@ -8,7 +8,7 @@ ISSUE_OUT = pathlib.Path("reports/issue_suggestions.md")
 
 _STATUS_KEYS = ("status", "outcome", "result", "state")
 _SKIPPED_STATUSES = {"skip", "skipped"}
-_FAIL_STATUSES = {"fail", "failed", "error", "errored"}
+_FAIL_STATUS_PREFIXES = ("fail", "error")
 
 def _normalize_duration(value: object) -> int:
     if isinstance(value, bool):
@@ -49,7 +49,7 @@ def load_results():
                 continue
             tests.append(obj.get("name"))
             durs.append(_normalize_duration(obj.get("duration_ms", 0)))
-            if status_lower in _FAIL_STATUSES:
+            if any(status_lower.startswith(prefix) for prefix in _FAIL_STATUS_PREFIXES):
                 fails.append(obj.get("name"))
     return tests, durs, fails
 
