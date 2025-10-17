@@ -14,6 +14,12 @@ _STATUS_TAGS: dict[str, str] = {
 }
 
 
+def _strip_namespace(tag: str) -> str:
+    if tag.startswith("{"):
+        return tag.split("}", 1)[1]
+    return tag
+
+
 def convert_junit_to_jsonl(input_path: Path, output_path: Path) -> None:
     tree = ET.parse(input_path)
     root = tree.getroot()
