@@ -114,6 +114,30 @@ def test_convert_junit_to_jsonl_records_passed_and_failed(tmp_path: Path, xml_co
     ]
 
 
+def test_convert_junit_to_jsonl_sets_fail_status_for_failure(tmp_path: Path) -> None:
+    xml_path = tmp_path / "pytest.xml"
+    output_path = tmp_path / "out.jsonl"
+    write_file(
+        xml_path,
+        """
+        <testcase classname="pkg.TestCase" name="test_failure">
+            <failure />
+        </testcase>
+        """,
+    )
+
+    convert_junit_to_jsonl(xml_path, output_path)
+
+    records = read_json_lines(output_path)
+    assert records == [
+        {
+            "classname": "pkg.TestCase",
+            "name": "test_failure",
+            "status": "fail",
+        }
+    ]
+
+
 def test_convert_junit_to_jsonl_handles_skipped_and_errors(tmp_path: Path) -> None:
     xml_path = tmp_path / "pytest.xml"
     output_path = tmp_path / "out.jsonl"
