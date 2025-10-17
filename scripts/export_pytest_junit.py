@@ -29,6 +29,12 @@ def _iter_testcase_records(root: ET.Element) -> Iterable[dict[str, object]]:
         yield _build_record(testcase)
 
 
+def _parse_duration_ms(time_str: str | None) -> int | None:
+    if not time_str:
+        return None
+    return int(float(time_str) * 1000)
+
+
 def _iter_testcases(root: ET.Element) -> Iterable[ET.Element]:
     if root.tag == "testsuites":
         for suite in root.findall("testsuite"):
@@ -47,16 +53,15 @@ def _iter_testcases(root: ET.Element) -> Iterable[ET.Element]:
 def _build_record(testcase: ET.Element) -> dict[str, object]:
     classname = testcase.attrib.get("classname", "")
     name = testcase.attrib.get("name", "")
-    time_str = testcase.attrib.get("time")
-    time_value = float(time_str) if time_str else None
+    duration_ms = _parse_duration_ms(testcase.attrib.get("time"))
 
     record: dict[str, object] = {
         "classname": classname,
         "name": name,
         "status": "passed",
     }
-    if time_value is not None:
-        record["duration_ms"] = int(time_value * 1000)
+    if duration_ms is not None:
+        record["duration_ms"] = duration_ms
 
     for tag, status in _STATUS_TAGS.items():
         element = testcase.find(tag)
