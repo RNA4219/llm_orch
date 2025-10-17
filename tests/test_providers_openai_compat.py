@@ -32,6 +32,8 @@ def _run_chat_and_capture(
 
     captured: dict[str, Any] = {}
 
+    call_count = 0
+
     class DummyAsyncClient:
         def __init__(self, *args: Any, **kwargs: Any) -> None:
             pass
@@ -43,11 +45,14 @@ def _run_chat_and_capture(
             return None
 
         async def post(self, url: str, headers: dict[str, str], json: dict[str, Any]) -> httpx.Response:
+            nonlocal call_count
+            call_count += 1
             if expected_url is not None:
                 assert url == expected_url
             captured["url"] = url
             captured["headers"] = headers
             captured["json"] = json
+            captured["call_count"] = call_count
             request = httpx.Request("POST", url, headers=headers)
             return httpx.Response(
                 status_code=200,
@@ -114,6 +119,31 @@ def test_openai_compat_respects_chat_completions_base_url(monkeypatch: pytest.Mo
     )
 
     assert captured["url"] == "https://api.openai.com/v1/chat/completions"
+    request_json = cast(dict[str, Any], captured["json"])
+    assert request_json["stream"] is False
+    assert response.content == "ok"
+
+
+def test_openai_compat_respects_chat_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider_def = ProviderDef(
+        name="openai",
+        type="openai",
+        base_url="https://api.openai.com/v1/chat",
+        model="gpt-4o",
+        auth_env="OPENAI_API_KEY",
+        rpm=60,
+        concurrency=1,
+    )
+
+    captured, response = _run_chat_and_capture(
+        provider_def,
+        "OPENAI_API_KEY",
+        monkeypatch,
+        expected_url="https://api.openai.com/v1/chat/completions",
+    )
+
+    assert captured["url"] == "https://api.openai.com/v1/chat/completions"
+    assert captured["call_count"] == 1
     request_json = cast(dict[str, Any], captured["json"])
     assert request_json["stream"] is False
     assert response.content == "ok"

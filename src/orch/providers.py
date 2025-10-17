@@ -142,9 +142,17 @@ class OpenAICompatProvider(BaseProvider):
             len(lowered_segments) >= 2
             and lowered_segments[-2:] == ["chat", "completions"]
         )
+        has_chat_suffix = bool(
+            not has_chat_completions_suffix
+            and lowered_segments
+            and lowered_segments[-1] == "chat"
+        )
         if has_chat_completions_suffix:
             segments_for_evaluation = path_segments[:-2]
             suffix_segments = path_segments[-2:]
+        elif has_chat_suffix:
+            segments_for_evaluation = path_segments[:-1]
+            suffix_segments = [path_segments[-1], "completions"]
         else:
             segments_for_evaluation = path_segments
             suffix_segments = ["chat", "completions"]
