@@ -266,9 +266,11 @@ class AnthropicProvider(BaseProvider):
         has_version_segment = any(is_version_segment(segment) for segment in normalized_segments)
 
         if normalized_segments:
-            if normalized_segments[-1].lower() != "messages":
-                if not has_version_segment:
-                    normalized_segments.append("v1")
+            ends_with_messages = normalized_segments[-1].lower() == "messages"
+            if not has_version_segment:
+                insert_index = len(normalized_segments) - 1 if ends_with_messages else len(normalized_segments)
+                normalized_segments.insert(insert_index, "v1")
+            if not ends_with_messages:
                 normalized_segments.append("messages")
         else:
             normalized_segments = ["v1", "messages"]
