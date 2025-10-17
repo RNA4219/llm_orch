@@ -18,6 +18,35 @@ def read_json_lines(path: Path) -> list[dict[str, object]]:
         return [json.loads(line) for line in handle]
 
 
+def test_convert_junit_to_jsonl_normalizes_failure_status(tmp_path: Path) -> None:
+    xml_path = tmp_path / "pytest.xml"
+    output_path = tmp_path / "out.jsonl"
+    write_file(
+        xml_path,
+        """
+        <testsuite name="sample" tests="1" failures="1" errors="0" skipped="0">
+            <testcase classname="sample.TestCase" name="test_failure" time="0.456">
+                <failure message="assertion failed">AssertionError</failure>
+            </testcase>
+        </testsuite>
+        """,
+    )
+
+    convert_junit_to_jsonl(xml_path, output_path)
+
+    records = read_json_lines(output_path)
+    assert records == [
+        {
+            "classname": "sample.TestCase",
+            "details": "AssertionError",
+            "message": "assertion failed",
+            "name": "test_failure",
+            "status": "fail",
+            "time": 0.456,
+        }
+    ]
+
+
 @pytest.mark.parametrize(
     "xml_content",
     [
@@ -45,7 +74,7 @@ def test_convert_junit_to_jsonl_records_passed_and_failed(tmp_path: Path, xml_co
         {
             "classname": "sample.TestCase",
             "name": "test_success",
-            "status": "passed",
+            "status": "pass",
             "time": 0.123,
         },
         {
@@ -53,7 +82,7 @@ def test_convert_junit_to_jsonl_records_passed_and_failed(tmp_path: Path, xml_co
             "details": "AssertionError",
             "message": "assertion failed",
             "name": "test_failure",
-            "status": "failed",
+            "status": "fail",
             "time": 0.456,
         },
     ]
@@ -97,13 +126,13 @@ def test_convert_junit_to_jsonl_handles_skipped_and_errors(tmp_path: Path) -> No
             "details": "reason",
             "message": "not supported",
             "name": "test_skipped",
-            "status": "skipped",
+            "status": "skip",
             "time": 0.0,
         },
         {
             "classname": "a.TestCase",
             "name": "test_pass",
-            "status": "passed",
+            "status": "pass",
             "time": 0.01,
         },
     ]

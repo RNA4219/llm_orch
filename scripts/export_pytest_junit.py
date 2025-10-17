@@ -7,9 +7,9 @@ from pathlib import Path
 from typing import Iterable, Sequence
 
 _STATUS_TAGS: dict[str, str] = {
-    "failure": "failed",
+    "failure": "fail",
     "error": "error",
-    "skipped": "skipped",
+    "skipped": "skip",
 }
 
 
@@ -53,7 +53,7 @@ def _build_record(testcase: ET.Element) -> dict[str, object]:
     record: dict[str, object] = {
         "classname": classname,
         "name": name,
-        "status": "passed",
+        "status": "pass",
     }
     if time_value is not None:
         record["time"] = time_value
