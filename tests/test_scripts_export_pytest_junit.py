@@ -18,6 +18,35 @@ def read_json_lines(path: Path) -> list[dict[str, object]]:
         return [json.loads(line) for line in handle]
 
 
+def test_convert_junit_to_jsonl_normalizes_failed_status(tmp_path: Path) -> None:
+    xml_path = tmp_path / "pytest.xml"
+    output_path = tmp_path / "out.jsonl"
+    write_file(
+        xml_path,
+        """
+        <testsuite>
+            <testcase classname="pkg.TestCase" name="test_case" time="0.1">
+                <failure message="boom">AssertionError</failure>
+            </testcase>
+        </testsuite>
+        """,
+    )
+
+    convert_junit_to_jsonl(xml_path, output_path)
+
+    records = read_json_lines(output_path)
+    assert records == [
+        {
+            "classname": "pkg.TestCase",
+            "details": "AssertionError",
+            "message": "boom",
+            "name": "test_case",
+            "status": "fail",
+            "duration_ms": 100,
+        }
+    ]
+
+
 def test_convert_junit_to_jsonl_includes_duration_ms(tmp_path: Path) -> None:
     xml_path = tmp_path / "pytest.xml"
     output_path = tmp_path / "out.jsonl"
@@ -79,7 +108,7 @@ def test_convert_junit_to_jsonl_records_passed_and_failed(tmp_path: Path, xml_co
             "details": "AssertionError",
             "message": "assertion failed",
             "name": "test_failure",
-            "status": "failed",
+            "status": "fail",
             "duration_ms": 456,
         },
     ]
@@ -123,7 +152,7 @@ def test_convert_junit_to_jsonl_handles_skipped_and_errors(tmp_path: Path) -> No
             "details": "reason",
             "message": "not supported",
             "name": "test_skipped",
-            "status": "skipped",
+            "status": "skip",
             "duration_ms": 0,
         },
         {
