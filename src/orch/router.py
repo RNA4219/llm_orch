@@ -41,6 +41,19 @@ class LoadedConfig:
     providers: Dict[str, ProviderDef]
     router: RouterConfig
 
+
+def _read_concurrency(name: str, raw_value: object) -> int:
+    concurrency = int(raw_value)
+    if concurrency < 1:
+        raise ValueError(
+            "Provider '{name}' defines invalid concurrency {value}; must be >= 1.".format(
+                name=name,
+                value=concurrency,
+            )
+        )
+    return concurrency
+
+
 def load_config(config_dir: str, use_dummy: bool=False) -> LoadedConfig:
     prov_path = os.path.join(config_dir, "providers.dummy.toml" if use_dummy else "providers.toml")
     with open(prov_path, "rb") as f:
@@ -54,7 +67,7 @@ def load_config(config_dir: str, use_dummy: bool=False) -> LoadedConfig:
             model=d.get("model", ""),
             auth_env=d.get("auth_env"),
             rpm=int(d.get("rpm", 60)),
-            concurrency=int(d.get("concurrency", 4)),
+            concurrency=_read_concurrency(name, d.get("concurrency", 4)),
         )
     with open(os.path.join(config_dir, "router.yaml"), "r", encoding="utf-8") as f:
         rdata = yaml.safe_load(f)
