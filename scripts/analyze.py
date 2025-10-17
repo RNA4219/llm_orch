@@ -38,11 +38,10 @@ def load_results():
             status_lower = status.lower() if isinstance(status, str) else ""
             if status_lower in {"skip", "skipped"}:
                 continue
-            name = obj.get("name")
-            tests.append(name)
+            tests.append(obj.get("name"))
             durs.append(_normalize_duration(obj.get("duration_ms", 0)))
             if status_lower in {"fail", "failed", "error"}:
-                fails.append(name)
+                fails.append(obj.get("name"))
     return tests, durs, fails
 
 def compute_p95(durations: Sequence[object]) -> int:
