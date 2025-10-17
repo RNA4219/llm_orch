@@ -176,6 +176,36 @@ def test_anthropic_payload_includes_tools(monkeypatch: pytest.MonkeyPatch) -> No
     assert request_json["tool_choice"] == tool_choice
 
 
+def test_anthropic_function_call_none_disables_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = build_anthropic_provider(monkeypatch)
+    tools = [
+        {
+            "name": "lookup",
+            "description": "Lookup data",
+            "input_schema": {
+                "type": "object",
+                "properties": {"q": {"type": "string"}},
+                "required": ["q"],
+            },
+        }
+    ]
+
+    captured, _ = run_chat(
+        provider,
+        monkeypatch,
+        messages=[{"role": "user", "content": "hello"}],
+        tools=tools,
+        tool_choice={"type": "tool", "name": "lookup"},
+        function_call="none",
+    )
+
+    request_json = cast(dict[str, Any], captured["json"])
+    assert "tools" not in request_json
+    assert request_json.get("tool_choice") == "none"
+
+
 def test_anthropic_payload_applies_function_call_name(monkeypatch: pytest.MonkeyPatch) -> None:
     provider = build_anthropic_provider(monkeypatch)
     tools = [
