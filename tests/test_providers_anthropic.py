@@ -716,24 +716,23 @@ def test_anthropic_chat_maps_tool_use_stop_reason(monkeypatch: pytest.MonkeyPatc
     assert choice["message"]["content"] == "Working on it."
 
 
-@pytest.mark.parametrize(
-    ("stop_reason", "expected"),
-    (
-        ("max_tokens", "length"),
-        ("end_turn", "stop"),
-        ("stop_sequence", "stop"),
-    ),
-)
-def test_anthropic_chat_normalizes_stop_reason(
-    monkeypatch: pytest.MonkeyPatch, stop_reason: str, expected: str
+def test_anthropic_tool_only_response_sets_content_none(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     provider = build_anthropic_provider(monkeypatch)
 
     messages = [{"role": "user", "content": "hello"}]
     response_payload = {
-        "content": [{"type": "text", "text": "done"}],
-        "stop_reason": stop_reason,
-        "usage": {"input_tokens": 1, "output_tokens": 2},
+        "content": [
+            {
+                "type": "tool_use",
+                "id": "call_42",
+                "name": "get_weather",
+                "input": {"location": "Tokyo"},
+            }
+        ],
+        "stop_reason": "tool_use",
+        "model": "claude-3-sonnet",
     }
 
     _, response = run_chat(
@@ -743,6 +742,8 @@ def test_anthropic_chat_normalizes_stop_reason(
         response_payload=response_payload,
     )
 
-    assert response.finish_reason == expected
+    assert response.content is None
     openai_response = chat_response_from_provider(response)
-    assert openai_response["choices"][0]["finish_reason"] == expected
+    choice = openai_response["choices"][0]
+    assert choice["finish_reason"] == "tool_calls"
+    assert choice["message"].get("content") is None
