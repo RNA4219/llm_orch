@@ -53,7 +53,7 @@ def test_convert_junit_to_jsonl_records_passed_and_failed(tmp_path: Path, xml_co
             "details": "AssertionError",
             "message": "assertion failed",
             "name": "test_failure",
-            "status": "failed",
+            "status": "fail",
             "time": 0.456,
         },
     ]
@@ -97,7 +97,7 @@ def test_convert_junit_to_jsonl_handles_skipped_and_errors(tmp_path: Path) -> No
             "details": "reason",
             "message": "not supported",
             "name": "test_skipped",
-            "status": "skipped",
+            "status": "skip",
             "time": 0.0,
         },
         {
@@ -107,3 +107,26 @@ def test_convert_junit_to_jsonl_handles_skipped_and_errors(tmp_path: Path) -> No
             "time": 0.01,
         },
     ]
+
+
+def test_convert_junit_to_jsonl_normalizes_status_values(tmp_path: Path) -> None:
+    xml_path = tmp_path / "pytest.xml"
+    output_path = tmp_path / "out.jsonl"
+    write_file(
+        xml_path,
+        """
+        <testsuite name="sample" tests="2" failures="1" errors="0" skipped="1">
+            <testcase classname="sample.TestCase" name="test_failure">
+                <failure message="oops" />
+            </testcase>
+            <testcase classname="sample.TestCase" name="test_skipped">
+                <skipped message="nope" />
+            </testcase>
+        </testsuite>
+        """,
+    )
+
+    convert_junit_to_jsonl(xml_path, output_path)
+
+    records = read_json_lines(output_path)
+    assert [record["status"] for record in records] == ["fail", "skip"]
