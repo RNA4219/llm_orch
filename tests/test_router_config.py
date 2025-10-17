@@ -14,7 +14,7 @@ from src.orch.router import load_config
 from src.orch.providers import ProviderRegistry
 
 
-def write_config(tmp_path, provider_type: str = "mock"):
+def write_config(tmp_path, provider_type: str = "mock", concurrency: int = 4):
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     (config_dir / "providers.toml").write_text(
@@ -25,8 +25,8 @@ base_url = "https://example.com"
 model = "gpt"
 auth_env = "TOKEN"
 rpm = 60
-concurrency = 4
-""".format(provider_type=provider_type)
+concurrency = {concurrency}
+""".format(provider_type=provider_type, concurrency=concurrency)
     )
     (config_dir / "router.yaml").write_text(
         """
@@ -43,6 +43,18 @@ routes:
         encoding="utf-8",
     )
     return str(config_dir)
+
+
+@pytest.mark.parametrize("invalid_concurrency", [0, -1])
+def test_load_config_rejects_non_positive_concurrency(tmp_path, invalid_concurrency):
+    config_dir = write_config(tmp_path, concurrency=invalid_concurrency)
+
+    with pytest.raises(ValueError) as excinfo:
+        load_config(config_dir)
+
+    message = str(excinfo.value)
+    assert "concurrency" in message
+    assert "alpha" in message
 
 
 def test_load_config_fails_for_unknown_provider(tmp_path):
