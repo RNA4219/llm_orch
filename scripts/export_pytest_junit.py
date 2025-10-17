@@ -57,6 +57,7 @@ def _build_record(testcase: ET.Element) -> dict[str, object]:
     }
     if time_value is not None:
         record["time"] = time_value
+        record["duration_ms"] = int(round(time_value * 1000))
 
     for tag, status in _STATUS_TAGS.items():
         element = testcase.find(tag)

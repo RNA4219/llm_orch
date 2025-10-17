@@ -44,6 +44,7 @@ def test_convert_junit_to_jsonl_records_passed_and_failed(tmp_path: Path, xml_co
     assert records == [
         {
             "classname": "sample.TestCase",
+            "duration_ms": 123,
             "name": "test_success",
             "status": "passed",
             "time": 0.123,
@@ -51,6 +52,7 @@ def test_convert_junit_to_jsonl_records_passed_and_failed(tmp_path: Path, xml_co
         {
             "classname": "sample.TestCase",
             "details": "AssertionError",
+            "duration_ms": 456,
             "message": "assertion failed",
             "name": "test_failure",
             "status": "failed",
@@ -86,6 +88,7 @@ def test_convert_junit_to_jsonl_handles_skipped_and_errors(tmp_path: Path) -> No
         {
             "classname": "a.TestCase",
             "details": "Traceback",
+            "duration_ms": 1,
             "message": "boom",
             "name": "test_error",
             "status": "error",
@@ -95,6 +98,7 @@ def test_convert_junit_to_jsonl_handles_skipped_and_errors(tmp_path: Path) -> No
         {
             "classname": "a.TestCase",
             "details": "reason",
+            "duration_ms": 0,
             "message": "not supported",
             "name": "test_skipped",
             "status": "skipped",
@@ -102,6 +106,7 @@ def test_convert_junit_to_jsonl_handles_skipped_and_errors(tmp_path: Path) -> No
         },
         {
             "classname": "a.TestCase",
+            "duration_ms": 10,
             "name": "test_pass",
             "status": "passed",
             "time": 0.01,
