@@ -38,18 +38,12 @@ def _parse_duration_ms(time_str: str | None) -> int | None:
 
 
 def _iter_testcases(root: ET.Element) -> Iterable[ET.Element]:
-    if root.tag == "testsuites":
-        for suite in root.findall("testsuite"):
-            yield from suite.findall("testcase")
-        return
-    if root.tag == "testsuite":
-        yield from root.findall("testcase")
-        return
     if root.tag == "testcase":
         yield root
         return
-    for suite in root.iter("testsuite"):
-        yield from suite.findall("testcase")
+
+    for child in root:
+        yield from _iter_testcases(child)
 
 
 def _build_record(testcase: ET.Element) -> dict[str, object]:
