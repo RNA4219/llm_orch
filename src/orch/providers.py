@@ -380,6 +380,7 @@ class AnthropicProvider(BaseProvider):
 
         system_messages: list[str] = []
         mapped: list[dict[str, Any]] = []
+        function_call_counter = 0
         for message in messages:
             role = message.get("role")
             if role == "system":
@@ -408,6 +409,27 @@ class AnthropicProvider(BaseProvider):
                     raise ValueError("Anthropic tool calls must be provided as a list.")
                 for tool_call in tool_calls:
                     content_blocks.append(map_tool_call(tool_call))
+            function_call_field = message.get("function_call")
+            if function_call_field is not None:
+                if not isinstance(function_call_field, dict):
+                    raise ValueError("Anthropic function_call must be provided as a dictionary.")
+                function_call_counter += 1
+                identifier_candidate = function_call_field.get("id")
+                identifier: str | None
+                if isinstance(identifier_candidate, str) and identifier_candidate:
+                    identifier = identifier_candidate
+                else:
+                    message_identifier = message.get("id")
+                    if isinstance(message_identifier, str) and message_identifier:
+                        identifier = message_identifier
+                    else:
+                        identifier = f"function_call_{function_call_counter}"
+                synthetic_tool_call = {
+                    "id": identifier,
+                    "type": "function",
+                    "function": dict(function_call_field),
+                }
+                content_blocks.append(map_tool_call(synthetic_tool_call))
             if not content_blocks:
                 content_blocks.append({"type": "text", "text": ""})
             mapped.append({"role": role, "content": content_blocks})
