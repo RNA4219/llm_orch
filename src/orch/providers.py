@@ -225,6 +225,18 @@ class OpenAICompatProvider(BaseProvider):
         finish_reason = first_choice.get("finish_reason")
         tool_calls = message.get("tool_calls")
         function_call = message.get("function_call")
+        additional_message_fields = {
+            key: value
+            for key, value in message.items()
+            if key
+            not in {
+                "role",
+                "content",
+                "tool_calls",
+                "function_call",
+            }
+            and value is not None
+        }
         usage = data.get("usage") or {}
         response_model = data.get("model") or self.defn.model or model
         return ProviderChatResponse(
