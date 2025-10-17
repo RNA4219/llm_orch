@@ -15,10 +15,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
+        id: fetch-logs
         if: ${{ github.event_name == 'workflow_run' }}
         with:
           name: test-logs
           path: logs
+          if-no-artifact-found: warn
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
