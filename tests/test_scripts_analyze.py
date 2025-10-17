@@ -53,6 +53,38 @@ def test_load_results_counts_error_status_as_failure(tmp_path, monkeypatch):
     assert fails == ["sample::error_case"]
 
 
+def test_analyze_main_counts_error_status_in_failures(tmp_path, monkeypatch):
+    log_path = tmp_path / "logs" / "test.jsonl"
+    report_path = tmp_path / "reports" / "today.md"
+    issue_path = tmp_path / "reports" / "issue_suggestions.md"
+
+    log_path.parent.mkdir(parents=True)
+    report_path.parent.mkdir(parents=True)
+
+    records = [
+        {"name": "sample::test_pass", "duration_ms": 5, "status": "pass"},
+        {"name": "sample::test_error", "duration_ms": 7, "status": "error"},
+    ]
+
+    with log_path.open("w", encoding="utf-8") as fp:
+        for record in records:
+            fp.write(json.dumps(record) + "\n")
+
+    monkeypatch.setattr(analyze, "LOG", log_path)
+    monkeypatch.setattr(analyze, "REPORT", report_path)
+    monkeypatch.setattr(analyze, "ISSUE_OUT", issue_path)
+
+    analyze.main()
+
+    report_text = report_path.read_text(encoding="utf-8")
+    assert "- Failures: 1" in report_text
+    assert "sample::test_error" in report_text
+
+    assert issue_path.exists()
+    issue_text = issue_path.read_text(encoding="utf-8")
+    assert "sample::test_error" in issue_text
+
+
 def test_analyze_main_handles_blank_lines(tmp_path, monkeypatch):
     log_path = tmp_path / "logs" / "test.jsonl"
     report_path = tmp_path / "reports" / "today.md"
@@ -79,6 +111,35 @@ def test_analyze_main_handles_blank_lines(tmp_path, monkeypatch):
     analyze.main()
 
     assert report_path.exists(), "Report file should be generated even with blank lines"
+
+
+def test_analyze_main_treats_skipped_tests_as_unexecuted(tmp_path, monkeypatch):
+    log_path = tmp_path / "logs" / "test.jsonl"
+    report_path = tmp_path / "reports" / "today.md"
+    issue_path = tmp_path / "reports" / "issue_suggestions.md"
+
+    log_path.parent.mkdir(parents=True)
+    report_path.parent.mkdir(parents=True)
+
+    records = [
+        {"name": "sample::test_skip_one", "duration_ms": 5, "status": "skip"},
+        {"name": "sample::test_skip_two", "duration_ms": 10, "status": "skipped"},
+    ]
+
+    with log_path.open("w", encoding="utf-8") as fp:
+        for record in records:
+            fp.write(json.dumps(record) + "\n")
+
+    monkeypatch.setattr(analyze, "LOG", log_path)
+    monkeypatch.setattr(analyze, "REPORT", report_path)
+    monkeypatch.setattr(analyze, "ISSUE_OUT", issue_path)
+
+    analyze.main()
+
+    report_text = report_path.read_text(encoding="utf-8")
+    assert "- Total tests: 0" in report_text
+    assert "- Pass rate: 未実行" in report_text
+    assert "- Failures: 0" in report_text
 
 
 def test_analyze_main_reports_no_tests_when_log_missing(tmp_path, monkeypatch):
