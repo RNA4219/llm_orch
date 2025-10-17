@@ -10,4 +10,14 @@ jobs:
           python-version: '3.11'
       - run: python -m venv .venv
       - run: . .venv/bin/activate && pip install -r requirements.txt
-      - run: . .venv/bin/activate && pytest -q
+      - run: mkdir -p logs
+      - run: . .venv/bin/activate && pytest -q --junitxml=logs/pytest.xml
+      - name: Export pytest results
+        if: always()
+        run: . .venv/bin/activate && python scripts/export_pytest_junit.py --input logs/pytest.xml --output logs/test.jsonl
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs
+          path: logs
