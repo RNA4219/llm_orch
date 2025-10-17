@@ -149,12 +149,15 @@ class OpenAICompatProvider(BaseProvider):
         )
         if has_chat_completions_suffix:
             segments_for_evaluation = path_segments[:-2]
-            suffix_segments = path_segments[-2:]
+            preserved_tail = path_segments[-2:]
+            suffix_segments = []
         elif has_chat_suffix:
             segments_for_evaluation = path_segments[:-1]
-            suffix_segments = [path_segments[-1], "completions"]
+            preserved_tail = path_segments[-1:]
+            suffix_segments = ["completions"]
         else:
             segments_for_evaluation = path_segments
+            preserved_tail = []
             suffix_segments = ["chat", "completions"]
         hostname = (parsed.hostname or "").lower()
         azure_compat_suffixes = (
@@ -201,6 +204,7 @@ class OpenAICompatProvider(BaseProvider):
         normalized_segments = list(segments_for_evaluation)
         if should_append_v1:
             normalized_segments.append("v1")
+        normalized_segments.extend(preserved_tail)
         normalized_segments.extend(suffix_segments)
         new_path = "/" + "/".join(normalized_segments)
         rebuilt = parsed._replace(path=new_path)
