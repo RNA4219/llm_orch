@@ -34,11 +34,15 @@ def load_results():
             if not stripped:
                 continue
             obj = json.loads(stripped)
-            tests.append(obj.get("name"))
-            durs.append(_normalize_duration(obj.get("duration_ms", 0)))
             status = obj.get("status")
-            if isinstance(status, str) and status.lower() in {"fail", "failed", "error"}:
-                fails.append(obj.get("name"))
+            status_lower = status.lower() if isinstance(status, str) else ""
+            if status_lower in {"skip", "skipped"}:
+                continue
+            name = obj.get("name")
+            tests.append(name)
+            durs.append(_normalize_duration(obj.get("duration_ms", 0)))
+            if status_lower in {"fail", "failed", "error"}:
+                fails.append(name)
     return tests, durs, fails
 
 def compute_p95(durations: Sequence[object]) -> int:
