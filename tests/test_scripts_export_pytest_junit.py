@@ -63,6 +63,31 @@ def test_convert_junit_to_jsonl_includes_duration_ms(tmp_path: Path) -> None:
     assert "time" not in records[0]
 
 
+def test_convert_junit_to_jsonl_rounds_duration_ms(tmp_path: Path) -> None:
+    xml_path = tmp_path / "pytest.xml"
+    output_path = tmp_path / "out.jsonl"
+    write_file(
+        xml_path,
+        """
+        <testsuite>
+            <testcase classname="pkg.TestCase" name="test_case" time="0.0015" />
+        </testsuite>
+        """,
+    )
+
+    convert_junit_to_jsonl(xml_path, output_path)
+
+    records = read_json_lines(output_path)
+    assert records == [
+        {
+            "classname": "pkg.TestCase",
+            "duration_ms": 2,
+            "name": "test_case",
+            "status": "passed",
+        }
+    ]
+
+
 @pytest.mark.parametrize(
     "xml_content",
     [
@@ -98,9 +123,33 @@ def test_convert_junit_to_jsonl_records_passed_and_failed(tmp_path: Path, xml_co
             "details": "AssertionError",
             "message": "assertion failed",
             "name": "test_failure",
-            "status": "failed",
+            "status": "fail",
             "duration_ms": 456,
         },
+    ]
+
+
+def test_convert_junit_to_jsonl_sets_fail_status_for_failure(tmp_path: Path) -> None:
+    xml_path = tmp_path / "pytest.xml"
+    output_path = tmp_path / "out.jsonl"
+    write_file(
+        xml_path,
+        """
+        <testcase classname="pkg.TestCase" name="test_failure">
+            <failure />
+        </testcase>
+        """,
+    )
+
+    convert_junit_to_jsonl(xml_path, output_path)
+
+    records = read_json_lines(output_path)
+    assert records == [
+        {
+            "classname": "pkg.TestCase",
+            "name": "test_failure",
+            "status": "fail",
+        }
     ]
 
 
@@ -142,7 +191,7 @@ def test_convert_junit_to_jsonl_handles_skipped_and_errors(tmp_path: Path) -> No
             "details": "reason",
             "message": "not supported",
             "name": "test_skipped",
-            "status": "skipped",
+            "status": "skip",
             "duration_ms": 0,
         },
         {
