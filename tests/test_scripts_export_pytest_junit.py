@@ -232,6 +232,38 @@ def test_convert_junit_to_jsonl_handles_nested_testsuites(tmp_path: Path) -> Non
     ]
 
 
+def test_convert_junit_to_jsonl_handles_default_namespace(tmp_path: Path) -> None:
+    xml_path = tmp_path / "pytest.xml"
+    output_path = tmp_path / "out.jsonl"
+    write_file(
+        xml_path,
+        """
+        <testsuite xmlns="urn:pytest">
+            <testcase classname="pkg.TestCase" name="test_one" time="0.100" />
+            <testcase classname="pkg.TestCase" name="test_two" time="0.200" />
+        </testsuite>
+        """,
+    )
+
+    convert_junit_to_jsonl(xml_path, output_path)
+
+    records = read_json_lines(output_path)
+    assert records == [
+        {
+            "classname": "pkg.TestCase",
+            "duration_ms": 100,
+            "name": "test_one",
+            "status": "passed",
+        },
+        {
+            "classname": "pkg.TestCase",
+            "duration_ms": 200,
+            "name": "test_two",
+            "status": "passed",
+        },
+    ]
+
+
 def test_convert_junit_to_jsonl_normalizes_error_status(tmp_path: Path) -> None:
     xml_path = tmp_path / "pytest.xml"
     output_path = tmp_path / "out.jsonl"
