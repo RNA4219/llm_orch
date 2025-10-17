@@ -107,6 +107,28 @@ def test_analyze_main_handles_blank_lines(tmp_path, monkeypatch):
     assert report_path.exists(), "Report file should be generated even with blank lines"
 
 
+def test_analyze_main_skip_only_counts_as_not_run(tmp_path, monkeypatch):
+    log_path = tmp_path / "logs" / "test.jsonl"
+    report_path = tmp_path / "reports" / "today.md"
+    issue_path = tmp_path / "reports" / "issue_suggestions.md"
+
+    log_path.parent.mkdir(parents=True)
+    report_path.parent.mkdir(parents=True)
+
+    record = {"name": "sample::skipped", "duration_ms": 42, "status": "skip"}
+    log_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+    monkeypatch.setattr(analyze, "LOG", log_path)
+    monkeypatch.setattr(analyze, "REPORT", report_path)
+    monkeypatch.setattr(analyze, "ISSUE_OUT", issue_path)
+
+    analyze.main()
+
+    report_text = report_path.read_text(encoding="utf-8")
+    assert "- Total tests: 0" in report_text
+    assert "- Pass rate: 未実行" in report_text
+
+
 def test_analyze_main_reports_no_tests_when_log_missing(tmp_path, monkeypatch):
     report_path = tmp_path / "reports" / "today.md"
     issue_path = tmp_path / "reports" / "issue_suggestions.md"
