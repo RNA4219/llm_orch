@@ -198,6 +198,58 @@ def test_chat_preserves_message_extra_fields(
     assert records[-1]["status"] == 200
 
 
+def test_chat_passes_typed_options_once(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+    records = capture_metric_records(server_module, monkeypatch)
+
+    from src.orch.types import ProviderChatResponse
+
+    provider_chat = AsyncMock(
+        return_value=ProviderChatResponse(
+            status_code=200,
+            model="dummy",
+            content="ok",
+        )
+    )
+
+    class MockProvider:
+        model = "dummy"
+
+        def __init__(self) -> None:
+            self.chat = provider_chat
+
+    monkeypatch.setitem(server_module.providers.providers, "dummy", MockProvider())
+
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "dummy",
+            "messages": [{"role": "user", "content": "hi"}],
+            "top_p": 0.25,
+            "frequency_penalty": 0.5,
+            "presence_penalty": -0.1,
+            "logit_bias": {"42": 1.0},
+            "response_format": {"type": "json_object"},
+        },
+    )
+
+    assert response.status_code == 200
+    provider_chat.assert_awaited_once()
+    assert provider_chat.await_args.args == ("dummy", [{"role": "user", "content": "hi"}])
+    called_kwargs = provider_chat.await_args.kwargs
+    assert called_kwargs["top_p"] == 0.25
+    assert called_kwargs["frequency_penalty"] == 0.5
+    assert called_kwargs["presence_penalty"] == -0.1
+    assert called_kwargs["logit_bias"] == {"42": 1.0}
+    assert called_kwargs["response_format"] == {"type": "json_object"}
+    assert records
+    assert records[-1]["status"] == 200
+
+
 def test_chat_accepts_tool_choice_strings(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

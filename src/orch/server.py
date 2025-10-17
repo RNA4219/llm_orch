@@ -147,6 +147,7 @@ async def chat_completions(req: Request, body: ChatRequest):
     ]
     function_call = getattr(body, "function_call", None)
     additional_options: dict[str, Any] = {}
+    typed_options: dict[str, Any] = {}
     typed_option_fields = (
         "top_p",
         "frequency_penalty",
@@ -158,11 +159,16 @@ async def chat_completions(req: Request, body: ChatRequest):
         if field in body.model_fields_set:
             value = getattr(body, field)
             if value is not None:
-                additional_options[field] = value
+                typed_options[field] = value
     extra_options_source = getattr(body, "model_extra", None)
     if isinstance(extra_options_source, dict):
         for key, value in extra_options_source.items():
-            if key == "function_call" or value is None or key in additional_options:
+            if (
+                key == "function_call"
+                or value is None
+                or key in additional_options
+                or key in typed_option_fields
+            ):
                 continue
             additional_options[key] = value
     if "temperature" in body.model_fields_set and body.temperature is not None:
@@ -193,6 +199,7 @@ async def chat_completions(req: Request, body: ChatRequest):
                         tools=body.tools,
                         tool_choice=body.tool_choice,
                         function_call=function_call,
+                        **typed_options,
                         **additional_options,
                     )
                 except Exception as exc:
