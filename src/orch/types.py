@@ -31,6 +31,17 @@ class ChatRequest(BaseModel):
     response_format: Optional[Dict[str, Any]] = None
 
 
+class ProviderChatChoice(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    index: int | None = None
+    message: dict[str, Any] | str | None = None
+    content: str | list[dict[str, Any]] | None = None
+    tool_calls: list[dict[str, Any]] | None = None
+    function_call: dict[str, Any] | None = None
+    finish_reason: str | None = None
+
+
 class ProviderChatResponse(BaseModel):
     status_code: int = 200
     model: str
@@ -40,7 +51,7 @@ class ProviderChatResponse(BaseModel):
     function_call: dict[str, Any] | None = None
     usage_prompt_tokens: Optional[int] = 0
     usage_completion_tokens: Optional[int] = 0
-    choices: list[dict[str, Any]] | None = None
+    choices: list[ProviderChatChoice] | None = None
 
 
 def chat_response_from_provider(p: ProviderChatResponse) -> dict[str, Any]:
@@ -59,15 +70,35 @@ def chat_response_from_provider(p: ProviderChatResponse) -> dict[str, Any]:
 
     def normalize_choice(raw_choice: dict[str, Any], index: int) -> dict[str, Any]:
         choice_payload = dict(raw_choice)
-        choice_payload["index"] = choice_payload.get("index", index)
-        raw_message = choice_payload.get("message")
+        choice_payload.pop("index", None)
+        raw_message = choice_payload.pop("message", None)
+        flattened_fields: dict[str, Any] = {}
+        for field in ("content", "tool_calls", "function_call"):
+            if field in choice_payload:
+                value = choice_payload.pop(field)
+                if value is not None and field not in flattened_fields:
+                    flattened_fields[field] = value
+
+        message_payload: Any
         if isinstance(raw_message, dict):
-            normalized_message = normalize_message(raw_message)
+            message_payload = dict(raw_message)
+            for field, value in flattened_fields.items():
+                message_payload.setdefault(field, value)
         elif raw_message is None:
-            normalized_message = {"role": "assistant"}
+            message_payload = flattened_fields or None
         else:
-            normalized_message = normalize_message({"content": raw_message})
+            message_payload = dict(flattened_fields)
+            message_payload.setdefault("content", raw_message)
+
+        if isinstance(message_payload, dict):
+            normalized_message = normalize_message(message_payload)
+        elif message_payload is None:
+            normalized_message = normalize_message(None)
+        else:
+            normalized_message = normalize_message({"content": message_payload})
+
         choice_payload["message"] = normalized_message
+        choice_payload["index"] = index
         if choice_payload.get("finish_reason") is None:
             choice_payload["finish_reason"] = "stop"
         return choice_payload
@@ -82,18 +113,22 @@ def chat_response_from_provider(p: ProviderChatResponse) -> dict[str, Any]:
         }.items()
         if value is not None
     }
-    choices_source = p.choices or [
-        {
-            "index": 0,
-            "message": fallback_message,
-            "finish_reason": p.finish_reason or "stop",
-        }
-    ]
+    serialized_choices: list[dict[str, Any]] = (
+        [choice.model_dump(mode="json", exclude_none=True) for choice in p.choices]
+        if p.choices
+        else []
+    )
+    if not serialized_choices:
+        serialized_choices = [
+            {
+                "message": fallback_message,
+                "finish_reason": p.finish_reason or "stop",
+            }
+        ]
+
     normalized_choices = [
-        normalize_choice(
-            choice if isinstance(choice, dict) else {"message": choice}, index
-        )
-        for index, choice in enumerate(choices_source)
+        normalize_choice(raw_choice, new_index)
+        for new_index, raw_choice in enumerate(serialized_choices)
     ]
 
     return {

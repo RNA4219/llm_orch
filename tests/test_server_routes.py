@@ -305,6 +305,59 @@ def test_chat_forwards_tools_to_provider(
     assert records[-1]["status"] == 200
 
 
+def test_chat_response_preserves_all_provider_choices(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+
+    from src.orch.types import ProviderChatResponse
+
+    provider_response = ProviderChatResponse(
+        status_code=200,
+        model="dummy",
+        choices=[
+            {"index": 5, "message": {"role": "assistant", "content": "first"}},
+            {"message": {"role": "assistant", "content": "second"}},
+        ],
+        usage_prompt_tokens=3,
+        usage_completion_tokens=7,
+    )
+    provider_chat = AsyncMock(return_value=provider_response)
+
+    class MockProvider:
+        model = "dummy"
+
+        def __init__(self) -> None:
+            self.chat = provider_chat
+
+    monkeypatch.setitem(server_module.providers.providers, "dummy", MockProvider())
+
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "dummy",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["choices"] == [
+        {
+            "index": 0,
+            "message": {"role": "assistant", "content": "first"},
+            "finish_reason": "stop",
+        },
+        {
+            "index": 1,
+            "message": {"role": "assistant", "content": "second"},
+            "finish_reason": "stop",
+        },
+    ]
+
+
 def test_chat_forwards_extra_options(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
