@@ -203,6 +203,37 @@ def test_openai_chat_response_preserves_list_content(
     assert message["content"] == content_blocks
 
 
+def test_openai_chat_response_preserves_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "secret")
+    provider = make_provider("https://api.openai.com")
+    upstream_response = {
+        "model": "gpt-4o",
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "refusal": "I cannot help with that.",
+                },
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 2},
+    }
+
+    post_calls, response = run_chat(provider, monkeypatch, upstream_response=upstream_response)
+
+    assert post_calls
+    assert response.additional_message_fields == {"refusal": "I cannot help with that."}
+
+    payload = chat_response_from_provider(response)
+    message = payload["choices"][0]["message"]
+    assert message["refusal"] == "I cannot help with that."
+    assert "content" not in message
+
+
 @pytest.mark.parametrize(
     "base_url",
     [
