@@ -196,6 +196,42 @@ def test_convert_junit_to_jsonl_handles_skipped_and_errors(tmp_path: Path) -> No
     ]
 
 
+def test_convert_junit_to_jsonl_handles_nested_testsuites(tmp_path: Path) -> None:
+    xml_path = tmp_path / "pytest.xml"
+    output_path = tmp_path / "out.jsonl"
+    write_file(
+        xml_path,
+        """
+        <testsuite name="root">
+            <testsuite name="child_one">
+                <testcase classname="pkg.TestCase" name="test_first" time="0.1" />
+            </testsuite>
+            <testsuite name="child_two">
+                <testcase classname="pkg.TestCase" name="test_second" time="0.2" />
+            </testsuite>
+        </testsuite>
+        """,
+    )
+
+    convert_junit_to_jsonl(xml_path, output_path)
+
+    records = read_json_lines(output_path)
+    assert records == [
+        {
+            "classname": "pkg.TestCase",
+            "name": "test_first",
+            "status": "passed",
+            "duration_ms": 100,
+        },
+        {
+            "classname": "pkg.TestCase",
+            "name": "test_second",
+            "status": "passed",
+            "duration_ms": 200,
+        },
+    ]
+
+
 def test_convert_junit_to_jsonl_normalizes_error_status(tmp_path: Path) -> None:
     xml_path = tmp_path / "pytest.xml"
     output_path = tmp_path / "out.jsonl"
