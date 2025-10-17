@@ -10,7 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.orch.providers import AnthropicProvider
+from src.orch.providers import AnthropicProvider, BaseProvider
 from src.orch.router import ProviderDef
 from src.orch.types import ProviderChatResponse, chat_response_from_provider
 

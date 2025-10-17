@@ -537,8 +537,6 @@ class AnthropicProvider(BaseProvider):
             "temperature": temperature,
             "messages": mapped,
         }
-        if top_p is not None:
-            payload["top_p"] = top_p
         if system_messages:
             payload["system"] = "\n\n".join(system_messages)
         if tools is not None and not disable_tools:
@@ -566,6 +564,7 @@ class AnthropicProvider(BaseProvider):
         if normalized_tool_choice is not None:
             payload["tool_choice"] = normalized_tool_choice
         cleaned_extra_options = dict(extra_options)
+        extra_top_p = cleaned_extra_options.pop("top_p", None)
         unsupported_option_names = (
             "frequency_penalty",
             "presence_penalty",
@@ -574,6 +573,9 @@ class AnthropicProvider(BaseProvider):
         )
         for option_name in unsupported_option_names:
             cleaned_extra_options.pop(option_name, None)
+        effective_top_p = top_p if top_p is not None else extra_top_p
+        if effective_top_p is not None:
+            payload["top_p"] = effective_top_p
         self._merge_extra_options(payload, cleaned_extra_options)
         async with httpx.AsyncClient(timeout=60) as client:
             r = await client.post(url, headers=headers, json=payload)
