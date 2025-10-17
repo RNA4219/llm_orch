@@ -21,10 +21,7 @@ jobs:
         with:
           name: test-logs
           path: logs
-      - name: Warn when logs artifact is unavailable
-        if: ${{ steps.fetch-logs.outcome == 'failure' }}
-        run: |
-          echo "::warning::test-logs artifact not found; continuing without log import"
+          if-no-artifact-found: warn
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
