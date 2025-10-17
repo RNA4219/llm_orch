@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from fnmatch import fnmatch
@@ -86,7 +87,38 @@ def read_event_body(event_path: Path) -> str | None:
 
 
 def validate_priority_score(body: str | None) -> bool:
-    return True
+    if body is None:
+        return False
+
+    for raw_line in body.splitlines():
+        if "Priority Score:" not in raw_line:
+            continue
+
+        _, remainder = raw_line.split("Priority Score:", 1)
+        normalized = remainder.strip()
+        if not normalized:
+            continue
+
+        if "/" not in normalized:
+            continue
+
+        score_part, reason_part = normalized.split("/", 1)
+        score_text = score_part.strip()
+        reason_text = reason_part.strip()
+
+        if not score_text or not reason_text:
+            continue
+
+        if not re.fullmatch(r"\d+", score_text):
+            continue
+
+        score_value = int(score_text)
+        if score_value < 1 or score_value > 5:
+            continue
+
+        return True
+
+    return False
 
 
 def main() -> int:
