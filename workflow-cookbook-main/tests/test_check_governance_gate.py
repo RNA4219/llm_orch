@@ -8,6 +8,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from tools.ci.check_governance_gate import (
     find_forbidden_matches,
     load_forbidden_patterns,
+    main,
     validate_priority_score,
 )
 
@@ -61,3 +62,55 @@ self_modification:
     )
 
     assert load_forbidden_patterns(policy) == ["core/schema/**", "auth/**"]
+
+
+def test_main_returns_error_when_priority_invalid(monkeypatch, tmp_path, capsys):
+    event_file = tmp_path / "event.json"
+    event_file.write_text("""{"pull_request": {"body": "invalid"}}""")
+
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event_file))
+    monkeypatch.setattr(
+        "tools.ci.check_governance_gate.load_forbidden_patterns", lambda _: []
+    )
+    monkeypatch.setattr(
+        "tools.ci.check_governance_gate.get_changed_paths", lambda _: []
+    )
+    monkeypatch.setattr(
+        "tools.ci.check_governance_gate.find_forbidden_matches",
+        lambda _paths, _patterns: [],
+    )
+    monkeypatch.setattr(
+        "tools.ci.check_governance_gate.validate_priority_score", lambda body: False
+    )
+
+    exit_code = main()
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "priority score validation failed" in captured.err.lower()
+
+
+def test_main_succeeds_when_priority_valid(monkeypatch, tmp_path, capsys):
+    event_file = tmp_path / "event.json"
+    event_file.write_text("""{"pull_request": {"body": "valid"}}""")
+
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event_file))
+    monkeypatch.setattr(
+        "tools.ci.check_governance_gate.load_forbidden_patterns", lambda _: []
+    )
+    monkeypatch.setattr(
+        "tools.ci.check_governance_gate.get_changed_paths", lambda _: []
+    )
+    monkeypatch.setattr(
+        "tools.ci.check_governance_gate.find_forbidden_matches",
+        lambda _paths, _patterns: [],
+    )
+    monkeypatch.setattr(
+        "tools.ci.check_governance_gate.validate_priority_score", lambda body: True
+    )
+
+    exit_code = main()
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert captured.err == ""
