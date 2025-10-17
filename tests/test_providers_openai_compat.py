@@ -149,6 +149,31 @@ def test_openai_compat_respects_chat_base_url(monkeypatch: pytest.MonkeyPatch) -
     assert response.content == "ok"
 
 
+def test_openai_compat_async_client_post_uses_chat_suffix_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider_def = ProviderDef(
+        name="openai",
+        type="openai",
+        base_url="https://api.openai.com/v1/chat",
+        model="gpt-4o",
+        auth_env="OPENAI_API_KEY",
+        rpm=60,
+        concurrency=1,
+    )
+
+    captured, _ = _run_chat_and_capture(
+        provider_def,
+        "OPENAI_API_KEY",
+        monkeypatch,
+        expected_url="https://api.openai.com/v1/chat/completions",
+    )
+
+    assert captured["url"] == "https://api.openai.com/v1/chat/completions"
+    assert captured["url"].count("/chat") == 1
+    assert captured["url"].count("/v1") == 1
+
+
 def test_openai_compat_preserves_perplexity_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
     provider_def = ProviderDef(
         name="perplexity",
@@ -166,6 +191,33 @@ def test_openai_compat_preserves_perplexity_base_url(monkeypatch: pytest.MonkeyP
     request_json = cast(dict[str, Any], captured["json"])
     assert request_json["stream"] is False
     assert response.content == "ok"
+
+
+def test_openai_compat_async_client_post_with_azure_chat_suffix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider_def = ProviderDef(
+        name="azure-openai",
+        type="openai",
+        base_url="https://example.openai.azure.com/openai/deployments/foo/chat",
+        model="gpt-4o",
+        auth_env="AZURE_OPENAI_API_KEY",
+        rpm=60,
+        concurrency=1,
+    )
+
+    captured, _ = _run_chat_and_capture(
+        provider_def,
+        "AZURE_OPENAI_API_KEY",
+        monkeypatch,
+        expected_url="https://example.openai.azure.com/openai/deployments/foo/chat/completions",
+    )
+
+    assert (
+        captured["url"]
+        == "https://example.openai.azure.com/openai/deployments/foo/chat/completions"
+    )
+    assert captured["url"].count("/chat") == 1
 
 
 def test_openai_compat_preserves_query_parameters(monkeypatch: pytest.MonkeyPatch) -> None:
