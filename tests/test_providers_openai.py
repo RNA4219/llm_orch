@@ -198,10 +198,40 @@ def test_openai_chat_response_preserves_list_content(
     assert post_calls
     assert response.content == content_blocks
 
-    payload = chat_response_from_provider(response)
-    message = payload["choices"][0]["message"]
-    assert message["content"] == content_blocks
 
+def test_openai_chat_response_handles_multiple_choices(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "secret")
+    provider = make_provider("https://api.openai.com")
+    upstream_response = {
+        "model": "gpt-4o",
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": "first"},
+                "finish_reason": "stop",
+            },
+            {
+                "index": 1,
+                "message": {"role": "assistant", "content": "second"},
+                "finish_reason": "stop",
+            },
+        ],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 6},
+    }
+
+    _, response = run_chat(provider, monkeypatch, upstream_response=upstream_response)
+
+    assert response.choices is not None
+    assert len(response.choices) == 2
+    assert response.choices[0]["message"]["content"] == "first"
+    assert response.choices[1]["message"]["content"] == "second"
+
+    payload = chat_response_from_provider(response)
+    assert len(payload["choices"]) == 2
+    assert payload["choices"][0]["message"]["content"] == "first"
+    assert payload["choices"][1]["message"]["content"] == "second"
 
 def test_chat_response_from_provider_keeps_multiple_choices() -> None:
     provider_response = ProviderChatResponse(

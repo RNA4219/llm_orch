@@ -218,25 +218,35 @@ class OpenAICompatProvider(BaseProvider):
             r = await client.post(url, headers=headers, json=payload)
             r.raise_for_status()
             data = r.json()
-        choices = data.get("choices") or []
-        first_choice = choices[0] if choices else {}
-        message = first_choice.get("message") or {}
-        content = message.get("content")
+        raw_choices = data.get("choices") or []
+        normalized_choices: list[dict[str, Any]] = []
+        for index, raw_choice in enumerate(raw_choices):
+            if isinstance(raw_choice, dict):
+                normalized_choice = dict(raw_choice)
+                normalized_choice["index"] = raw_choice.get("index", index)
+                raw_message = raw_choice.get("message")
+                if isinstance(raw_message, dict):
+                    normalized_message = {
+                        key: value for key, value in raw_message.items() if value is not None
+                    }
+                elif raw_message is None:
+                    normalized_message = None
+                else:
+                    normalized_message = {"content": raw_message}
+                if normalized_message is not None:
+                    normalized_choice["message"] = normalized_message
+                elif "message" in normalized_choice:
+                    normalized_choice["message"] = None
+                normalized_choices.append(normalized_choice)
+            else:
+                normalized_choices.append({"index": index, "message": raw_choice})
+        first_choice: dict[str, Any] = normalized_choices[0] if normalized_choices else {}
+        first_message_raw = first_choice.get("message") if isinstance(first_choice, dict) else None
+        first_message = first_message_raw if isinstance(first_message_raw, dict) else {}
+        content = first_message.get("content")
         finish_reason = first_choice.get("finish_reason")
-        tool_calls = message.get("tool_calls")
-        function_call = message.get("function_call")
-        additional_message_fields = {
-            key: value
-            for key, value in message.items()
-            if key
-            not in {
-                "role",
-                "content",
-                "tool_calls",
-                "function_call",
-            }
-            and value is not None
-        }
+        tool_calls = first_message.get("tool_calls")
+        function_call = first_message.get("function_call")
         usage = data.get("usage") or {}
         response_model = data.get("model") or self.defn.model or model
         return ProviderChatResponse(
@@ -248,7 +258,7 @@ class OpenAICompatProvider(BaseProvider):
             function_call=function_call,
             usage_prompt_tokens=usage.get("prompt_tokens", 0),
             usage_completion_tokens=usage.get("completion_tokens", 0),
-            choices=choices or None,
+            choices=normalized_choices or None,
         )
 
 class AnthropicProvider(BaseProvider):
