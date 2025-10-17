@@ -19,6 +19,7 @@ def _run_chat_and_capture(
     env_name: str,
     monkeypatch: pytest.MonkeyPatch,
     *,
+    expected_url: str | None = None,
     tools: list[dict[str, Any]] | None = None,
     tool_choice: dict[str, Any] | None = None,
     function_call: dict[str, Any] | str | None = None,
@@ -42,6 +43,8 @@ def _run_chat_and_capture(
             return None
 
         async def post(self, url: str, headers: dict[str, str], json: dict[str, Any]) -> httpx.Response:
+            if expected_url is not None:
+                assert url == expected_url
             captured["url"] = url
             captured["headers"] = headers
             captured["json"] = json
@@ -85,6 +88,30 @@ def test_openai_compat_appends_single_v1_segment(monkeypatch: pytest.MonkeyPatch
     )
 
     captured, response = _run_chat_and_capture(provider_def, "OPENAI_API_KEY", monkeypatch)
+
+    assert captured["url"] == "https://api.openai.com/v1/chat/completions"
+    request_json = cast(dict[str, Any], captured["json"])
+    assert request_json["stream"] is False
+    assert response.content == "ok"
+
+
+def test_openai_compat_respects_chat_completions_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider_def = ProviderDef(
+        name="openai",
+        type="openai",
+        base_url="https://api.openai.com/v1/chat/completions",
+        model="gpt-4o",
+        auth_env="OPENAI_API_KEY",
+        rpm=60,
+        concurrency=1,
+    )
+
+    captured, response = _run_chat_and_capture(
+        provider_def,
+        "OPENAI_API_KEY",
+        monkeypatch,
+        expected_url="https://api.openai.com/v1/chat/completions",
+    )
 
     assert captured["url"] == "https://api.openai.com/v1/chat/completions"
     request_json = cast(dict[str, Any], captured["json"])
