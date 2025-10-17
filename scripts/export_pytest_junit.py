@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import xml.etree.ElementTree as ET
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 from typing import Iterable, Sequence
 
@@ -33,8 +33,12 @@ def _iter_testcase_records(root: ET.Element) -> Iterable[dict[str, object]]:
 def _parse_duration_ms(time_str: str | None) -> int | None:
     if not time_str:
         return None
-    milliseconds = Decimal(time_str) * Decimal(1000)
-    return int(milliseconds.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    try:
+        milliseconds = Decimal(time_str) * Decimal(1000)
+        quantized = milliseconds.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+        return int(quantized)
+    except (InvalidOperation, OverflowError, ValueError):
+        return None
 
 
 def _iter_testcases(root: ET.Element) -> Iterable[ET.Element]:

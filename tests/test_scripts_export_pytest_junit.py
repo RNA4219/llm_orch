@@ -81,6 +81,29 @@ def test_convert_junit_to_jsonl_rounds_duration_ms(tmp_path: Path) -> None:
     assert record["duration_ms"] == 2
 
 
+def test_convert_junit_to_jsonl_handles_non_numeric_time(tmp_path: Path) -> None:
+    xml_path = tmp_path / "pytest.xml"
+    output_path = tmp_path / "out.jsonl"
+    write_file(
+        xml_path,
+        """
+        <testsuite>
+            <testcase classname="pkg.TestCase" name="test_nan" time="NaN" />
+            <testcase classname="pkg.TestCase" name="test_blank" time="" />
+            <testcase classname="pkg.TestCase" name="test_valid" time="0.100" />
+        </testsuite>
+        """,
+    )
+
+    convert_junit_to_jsonl(xml_path, output_path)
+
+    records = read_json_lines(output_path)
+    assert len(records) == 3
+    assert "duration_ms" not in records[0]
+    assert "duration_ms" not in records[1]
+    assert records[2]["duration_ms"] == 100
+
+
 @pytest.mark.parametrize(
     "xml_content",
     [
