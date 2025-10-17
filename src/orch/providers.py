@@ -556,7 +556,7 @@ class AnthropicProvider(BaseProvider):
                 result_content = block.get("content")
                 text_parts.append(normalize_text_content(result_content))
 
-        content = "".join(text_parts)
+        content = "".join(text_parts) if text_parts else None
         finish_reason_raw = data.get("stop_reason")
         finish_reason = "tool_calls" if finish_reason_raw == "tool_use" else finish_reason_raw
         normalized_tool_calls = tool_calls or None

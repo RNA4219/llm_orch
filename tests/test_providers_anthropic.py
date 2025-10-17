@@ -714,3 +714,36 @@ def test_anthropic_chat_maps_tool_use_stop_reason(monkeypatch: pytest.MonkeyPatc
     assert choice["finish_reason"] == "tool_calls"
     assert choice["message"]["tool_calls"] == response.tool_calls
     assert choice["message"]["content"] == "Working on it."
+
+
+def test_anthropic_tool_only_response_sets_content_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = build_anthropic_provider(monkeypatch)
+
+    messages = [{"role": "user", "content": "hello"}]
+    response_payload = {
+        "content": [
+            {
+                "type": "tool_use",
+                "id": "call_42",
+                "name": "get_weather",
+                "input": {"location": "Tokyo"},
+            }
+        ],
+        "stop_reason": "tool_use",
+        "model": "claude-3-sonnet",
+    }
+
+    _, response = run_chat(
+        provider,
+        monkeypatch,
+        messages,
+        response_payload=response_payload,
+    )
+
+    assert response.content is None
+    openai_response = chat_response_from_provider(response)
+    choice = openai_response["choices"][0]
+    assert choice["finish_reason"] == "tool_calls"
+    assert choice["message"].get("content") is None
