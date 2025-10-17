@@ -25,6 +25,7 @@ def run_chat(
     tools: list[dict[str, Any]] | None = None,
     tool_choice: dict[str, Any] | None = None,
     function_call: dict[str, Any] | None = None,
+    **chat_kwargs: Any,
 ) -> tuple[dict[str, Any], ProviderChatResponse]:
     captured: dict[str, Any] = {}
 
@@ -63,6 +64,7 @@ def run_chat(
             tools=tools,
             tool_choice=tool_choice,
             function_call=function_call,
+            **chat_kwargs,
         )
 
     response = asyncio.run(invoke())
@@ -150,6 +152,26 @@ def test_anthropic_payload_maps_openai_messages(monkeypatch: pytest.MonkeyPatch)
     assert response.content == "ok"
     assert response.usage_prompt_tokens == 1
     assert response.usage_completion_tokens == 2
+
+
+def test_anthropic_payload_includes_supported_sampling_parameters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = build_anthropic_provider(monkeypatch)
+
+    captured, _ = run_chat(
+        provider,
+        monkeypatch,
+        messages=[{"role": "user", "content": "hello"}],
+        top_p=0.3,
+        frequency_penalty=1.2,
+        presence_penalty=-0.4,
+    )
+
+    request_json = cast(dict[str, Any], captured["json"])
+    assert request_json["top_p"] == 0.3
+    assert "frequency_penalty" not in request_json
+    assert "presence_penalty" not in request_json
 
 
 def test_anthropic_base_url_with_messages_adds_version(
