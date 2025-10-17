@@ -296,3 +296,37 @@ def test_convert_junit_to_jsonl_handles_nested_testsuites_within_testsuites(
             "duration_ms": 456,
         },
     ]
+
+
+def test_convert_junit_to_jsonl_handles_default_namespace(tmp_path: Path) -> None:
+    xml_path = tmp_path / "pytest.xml"
+    output_path = tmp_path / "out.jsonl"
+    write_file(
+        xml_path,
+        """
+        <testsuite xmlns="http://example.com/pytest" name="ns-suite">
+            <testcase classname="pkg.TestCase" name="test_first" time="0.1" />
+            <testsuite name="nested">
+                <testcase classname="pkg.TestCase" name="test_second" time="0.2" />
+            </testsuite>
+        </testsuite>
+        """,
+    )
+
+    convert_junit_to_jsonl(xml_path, output_path)
+
+    records = read_json_lines(output_path)
+    assert records == [
+        {
+            "classname": "pkg.TestCase",
+            "name": "test_first",
+            "status": "passed",
+            "duration_ms": 100,
+        },
+        {
+            "classname": "pkg.TestCase",
+            "name": "test_second",
+            "status": "passed",
+            "duration_ms": 200,
+        },
+    ]

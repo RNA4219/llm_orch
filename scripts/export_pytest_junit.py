@@ -37,21 +37,17 @@ def _parse_duration_ms(time_str: str | None) -> int | None:
     return int(milliseconds.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
+def _strip_namespace(tag: str) -> str:
+    if "}" in tag:
+        return tag.split("}", 1)[1]
+    return tag
+
+
 def _iter_testcases(root: ET.Element) -> Iterable[ET.Element]:
-    tag = root.tag
+    tag = _strip_namespace(root.tag)
 
     if tag == "testcase":
         yield root
-        return
-
-    if tag in {"testsuite", "testsuites"}:
-        for child in root:
-            if child.tag == "testcase":
-                yield child
-            elif child.tag in {"testsuite", "testsuites"}:
-                yield from _iter_testcases(child)
-            else:
-                yield from _iter_testcases(child)
         return
 
     for child in root:
