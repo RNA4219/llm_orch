@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Iterable, Sequence
 
 _STATUS_TAGS: dict[str, str] = {
-    "failure": "failed",
+    "failure": "fail",
     "error": "error",
     "skipped": "skipped",
 }
