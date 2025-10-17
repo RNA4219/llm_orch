@@ -9,7 +9,7 @@ from typing import Iterable, Sequence
 
 _STATUS_TAGS: dict[str, str] = {
     "failure": "fail",
-    "error": "error",
+    "error": "fail",
     "skipped": "skip",
 }
 
