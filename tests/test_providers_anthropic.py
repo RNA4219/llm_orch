@@ -241,6 +241,43 @@ def test_anthropic_payload_normalizes_tool_choice(monkeypatch: pytest.MonkeyPatc
     assert request_json_auto["tool_choice"] == "auto"
 
 
+def test_anthropic_payload_maps_function_call_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = build_anthropic_provider(monkeypatch)
+
+    messages: list[dict[str, Any]] = [
+        {"role": "user", "content": "hello"},
+        {
+            "role": "assistant",
+            "function_call": {
+                "name": "lookup",
+                "arguments": "{\"q\": \"weather\"}",
+            },
+        },
+    ]
+
+    captured, _ = run_chat(provider, monkeypatch, messages)
+
+    request_json = cast(dict[str, Any], captured["json"])
+    anthropic_messages = cast(list[dict[str, Any]], request_json["messages"])
+
+    assert anthropic_messages == [
+        {"role": "user", "content": [{"type": "text", "text": "hello"}]},
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "function_call_1",
+                    "name": "lookup",
+                    "input": {"q": "weather"},
+                }
+            ],
+        },
+    ]
+
+
 def test_anthropic_payload_maps_tool_messages(monkeypatch: pytest.MonkeyPatch) -> None:
     provider = build_anthropic_provider(monkeypatch)
     tool_content = [{"type": "output_text", "text": "done"}]
