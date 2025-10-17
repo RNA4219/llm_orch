@@ -53,6 +53,32 @@ def test_load_results_counts_error_status_as_failure(tmp_path, monkeypatch):
     assert fails == ["sample::error_case"]
 
 
+def test_load_results_counts_multiple_failure_statuses(tmp_path, monkeypatch):
+    log_path = tmp_path / "logs" / "test.jsonl"
+    log_path.parent.mkdir(parents=True)
+
+    records = [
+        {"name": "sample::error_case", "duration_ms": 5, "status": "error"},
+        {"name": "sample::failed_case", "duration_ms": 7, "status": "failed"},
+        {"name": "sample::errored_case", "duration_ms": 9, "status": "errored"},
+        {"name": "sample::pass_case", "duration_ms": 11, "status": "pass"},
+    ]
+
+    with log_path.open("w", encoding="utf-8") as fp:
+        for record in records:
+            fp.write(json.dumps(record) + "\n")
+
+    monkeypatch.setattr(analyze, "LOG", log_path)
+
+    _, _, fails = analyze.load_results()
+
+    assert fails == [
+        "sample::error_case",
+        "sample::failed_case",
+        "sample::errored_case",
+    ]
+
+
 def test_analyze_main_handles_blank_lines(tmp_path, monkeypatch):
     log_path = tmp_path / "logs" / "test.jsonl"
     report_path = tmp_path / "reports" / "today.md"
