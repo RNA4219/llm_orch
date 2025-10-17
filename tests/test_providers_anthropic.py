@@ -714,3 +714,35 @@ def test_anthropic_chat_maps_tool_use_stop_reason(monkeypatch: pytest.MonkeyPatc
     assert choice["finish_reason"] == "tool_calls"
     assert choice["message"]["tool_calls"] == response.tool_calls
     assert choice["message"]["content"] == "Working on it."
+
+
+@pytest.mark.parametrize(
+    ("stop_reason", "expected"),
+    (
+        ("max_tokens", "length"),
+        ("end_turn", "stop"),
+        ("stop_sequence", "stop"),
+    ),
+)
+def test_anthropic_chat_normalizes_stop_reason(
+    monkeypatch: pytest.MonkeyPatch, stop_reason: str, expected: str
+) -> None:
+    provider = build_anthropic_provider(monkeypatch)
+
+    messages = [{"role": "user", "content": "hello"}]
+    response_payload = {
+        "content": [{"type": "text", "text": "done"}],
+        "stop_reason": stop_reason,
+        "usage": {"input_tokens": 1, "output_tokens": 2},
+    }
+
+    _, response = run_chat(
+        provider,
+        monkeypatch,
+        messages,
+        response_payload=response_payload,
+    )
+
+    assert response.finish_reason == expected
+    openai_response = chat_response_from_provider(response)
+    assert openai_response["choices"][0]["finish_reason"] == expected
