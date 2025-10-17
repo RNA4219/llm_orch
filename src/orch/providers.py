@@ -137,10 +137,17 @@ class OpenAICompatProvider(BaseProvider):
         path = parsed.path or ""
         normalized_path = path.rstrip("/")
         path_segments = [segment for segment in normalized_path.split("/") if segment]
+        lowered_segments = [segment.lower() for segment in path_segments]
         has_chat_completions_suffix = bool(
-            len(path_segments) >= 2 and path_segments[-2:] == ["chat", "completions"]
+            len(lowered_segments) >= 2
+            and lowered_segments[-2:] == ["chat", "completions"]
         )
-        segments_for_evaluation = path_segments[:-2] if has_chat_completions_suffix else path_segments
+        if has_chat_completions_suffix:
+            segments_for_evaluation = path_segments[:-2]
+            suffix_segments = path_segments[-2:]
+        else:
+            segments_for_evaluation = path_segments
+            suffix_segments = ["chat", "completions"]
         hostname = (parsed.hostname or "").lower()
         azure_compat_suffixes = (
             "openai.azure.com",
@@ -186,7 +193,7 @@ class OpenAICompatProvider(BaseProvider):
         normalized_segments = list(segments_for_evaluation)
         if should_append_v1:
             normalized_segments.append("v1")
-        normalized_segments.extend(["chat", "completions"])
+        normalized_segments.extend(suffix_segments)
         new_path = "/" + "/".join(normalized_segments)
         rebuilt = parsed._replace(path=new_path)
         url = urlunparse(rebuilt)
