@@ -174,43 +174,19 @@ def test_anthropic_payload_includes_supported_sampling_parameters(
     assert "presence_penalty" not in request_json
 
 
-def test_anthropic_payload_includes_top_p_without_extra_option_duplication(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_anthropic_payload_sets_max_output_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
     provider = build_anthropic_provider(monkeypatch)
-
-    received_extra_options: dict[str, Any] | None = None
-
-    original_merge = BaseProvider._merge_extra_options.__func__
-
-    def capture_merge(
-        cls: type[BaseProvider],
-        payload: dict[str, Any],
-        extra: dict[str, Any] | None,
-    ) -> None:
-        nonlocal received_extra_options
-        received_extra_options = dict(extra) if extra else {}
-        original_merge(cls, payload, extra)
-
-    monkeypatch.setattr(
-        AnthropicProvider,
-        "_merge_extra_options",
-        classmethod(capture_merge),
-    )
 
     captured, _ = run_chat(
         provider,
         monkeypatch,
         messages=[{"role": "user", "content": "hello"}],
-        top_p=0.55,
-        metadata="meta",
+        max_tokens=321,
     )
 
     request_json = cast(dict[str, Any], captured["json"])
-
-    assert request_json["top_p"] == 0.55
-    assert received_extra_options is not None
-    assert "top_p" not in received_extra_options
+    assert request_json["max_output_tokens"] == 321
+    assert "max_tokens" not in request_json
 
 
 def test_anthropic_base_url_with_messages_adds_version(
