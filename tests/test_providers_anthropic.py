@@ -10,7 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.orch.providers import AnthropicProvider
+from src.orch.providers import AnthropicProvider, BaseProvider
 from src.orch.router import ProviderDef
 from src.orch.types import ProviderChatResponse, chat_response_from_provider
 
@@ -172,6 +172,45 @@ def test_anthropic_payload_includes_supported_sampling_parameters(
     assert request_json["top_p"] == 0.3
     assert "frequency_penalty" not in request_json
     assert "presence_penalty" not in request_json
+
+
+def test_anthropic_payload_includes_top_p_without_extra_option_duplication(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = build_anthropic_provider(monkeypatch)
+
+    received_extra_options: dict[str, Any] | None = None
+
+    original_merge = BaseProvider._merge_extra_options.__func__
+
+    def capture_merge(
+        cls: type[BaseProvider],
+        payload: dict[str, Any],
+        extra: dict[str, Any] | None,
+    ) -> None:
+        nonlocal received_extra_options
+        received_extra_options = dict(extra) if extra else {}
+        original_merge(cls, payload, extra)
+
+    monkeypatch.setattr(
+        AnthropicProvider,
+        "_merge_extra_options",
+        classmethod(capture_merge),
+    )
+
+    captured, _ = run_chat(
+        provider,
+        monkeypatch,
+        messages=[{"role": "user", "content": "hello"}],
+        top_p=0.55,
+        metadata="meta",
+    )
+
+    request_json = cast(dict[str, Any], captured["json"])
+
+    assert request_json["top_p"] == 0.55
+    assert received_extra_options is not None
+    assert "top_p" not in received_extra_options
 
 
 def test_anthropic_base_url_with_messages_adds_version(
