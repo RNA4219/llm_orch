@@ -166,9 +166,12 @@ class OpenAICompatProvider(BaseProvider):
             suffix = lowered[1:]
             return bool(suffix) and suffix[0].isdigit()
 
-        has_openai_segment = any(segment == "openai" for segment in segments_for_evaluation)
+        has_openai_segment = any(
+            segment.lower() == "openai" for segment in segments_for_evaluation
+        )
+        last_segment = segments_for_evaluation[-1] if segments_for_evaluation else None
         openai_is_last_segment = bool(
-            segments_for_evaluation and segments_for_evaluation[-1] == "openai"
+            last_segment is not None and last_segment.lower() == "openai"
         )
 
         should_append_v1 = True

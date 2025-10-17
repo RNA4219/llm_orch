@@ -160,6 +160,35 @@ def test_openai_compat_preserves_query_parameters(monkeypatch: pytest.MonkeyPatc
     assert response.content == "ok"
 
 
+def test_openai_compat_handles_mixed_case_openai_segment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider_def = ProviderDef(
+        name="azure-openai",
+        type="openai",
+        base_url="https://example.openai.azure.com/OpenAI/deployments/foo",
+        model="gpt-4o",
+        auth_env="AZURE_OPENAI_API_KEY",
+        rpm=60,
+        concurrency=1,
+    )
+
+    captured, response = _run_chat_and_capture(
+        provider_def,
+        "AZURE_OPENAI_API_KEY",
+        monkeypatch,
+        expected_url="https://example.openai.azure.com/OpenAI/deployments/foo/chat/completions",
+    )
+
+    assert (
+        captured["url"]
+        == "https://example.openai.azure.com/OpenAI/deployments/foo/chat/completions"
+    )
+    request_json = cast(dict[str, Any], captured["json"])
+    assert request_json["stream"] is False
+    assert response.content == "ok"
+
+
 @pytest.mark.parametrize(
     "base_url",
     [
