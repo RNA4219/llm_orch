@@ -30,7 +30,10 @@ def load_results():
         return tests, durs, fails
     with LOG.open() as f:
         for line in f:
-            obj = json.loads(line)
+            stripped = line.strip()
+            if not stripped:
+                continue
+            obj = json.loads(stripped)
             tests.append(obj.get("name"))
             durs.append(_normalize_duration(obj.get("duration_ms", 0)))
             if obj.get("status") == "fail":

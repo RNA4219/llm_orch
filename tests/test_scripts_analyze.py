@@ -34,6 +34,34 @@ def test_analyze_main_generates_report(tmp_path, monkeypatch):
     assert report_path.exists(), "Report file should be generated"
 
 
+def test_analyze_main_handles_blank_lines(tmp_path, monkeypatch):
+    log_path = tmp_path / "logs" / "test.jsonl"
+    report_path = tmp_path / "reports" / "today.md"
+    issue_path = tmp_path / "reports" / "issue_suggestions.md"
+
+    log_path.parent.mkdir(parents=True)
+    report_path.parent.mkdir(parents=True)
+
+    records = [
+        {"name": "sample::test_one", "duration_ms": 10, "status": "pass"},
+        {"name": "sample::test_two", "duration_ms": 20, "status": "fail"},
+    ]
+
+    with log_path.open("w", encoding="utf-8") as fp:
+        fp.write("\n")
+        for record in records:
+            fp.write(json.dumps(record) + "\n\n")
+        fp.write("   \n")
+
+    monkeypatch.setattr(analyze, "LOG", log_path)
+    monkeypatch.setattr(analyze, "REPORT", report_path)
+    monkeypatch.setattr(analyze, "ISSUE_OUT", issue_path)
+
+    analyze.main()
+
+    assert report_path.exists(), "Report file should be generated even with blank lines"
+
+
 def test_analyze_main_reports_no_tests_when_log_missing(tmp_path, monkeypatch):
     report_path = tmp_path / "reports" / "today.md"
     issue_path = tmp_path / "reports" / "issue_suggestions.md"
