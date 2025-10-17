@@ -558,14 +558,18 @@ class AnthropicProvider(BaseProvider):
 
         content = "".join(text_parts) if text_parts else None
         finish_reason_raw = data.get("stop_reason")
-        stop_reason_map = {
-            "tool_use": "tool_calls",
-            "max_tokens": "length",
-            "message_limit": "length",
-            "end_turn": "stop",
-            "stop_sequence": "stop",
-        }
-        finish_reason = stop_reason_map.get(finish_reason_raw, finish_reason_raw)
+        finish_reason: str | None
+        if isinstance(finish_reason_raw, str):
+            if finish_reason_raw == "tool_use":
+                finish_reason = "tool_calls"
+            elif finish_reason_raw in {"max_tokens", "message_limit"}:
+                finish_reason = "length"
+            elif finish_reason_raw in {"end_turn", "stop_sequence"}:
+                finish_reason = "stop"
+            else:
+                finish_reason = finish_reason_raw
+        else:
+            finish_reason = None
         normalized_tool_calls = tool_calls or None
         usage = data.get("usage") or {}
         response_model = data.get("model") or self.defn.model or model
