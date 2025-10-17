@@ -1,9 +1,28 @@
 import json, statistics, pathlib, datetime, math, shutil
 from collections import Counter
+from typing import Sequence
 
 LOG = pathlib.Path("logs/test.jsonl")
 REPORT = pathlib.Path("reports/today.md")
 ISSUE_OUT = pathlib.Path("reports/issue_suggestions.md")
+
+def _normalize_duration(value: object) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        if isinstance(value, float) and not math.isfinite(value):
+            return 0
+        return int(value)
+    if isinstance(value, str):
+        try:
+            parsed = float(value)
+        except ValueError:
+            return 0
+        if not math.isfinite(parsed):
+            return 0
+        return int(parsed)
+    return 0
+
 
 def load_results():
     tests, durs, fails = [], [], []
@@ -13,18 +32,19 @@ def load_results():
         for line in f:
             obj = json.loads(line)
             tests.append(obj.get("name"))
-            durs.append(obj.get("duration_ms", 0))
+            durs.append(_normalize_duration(obj.get("duration_ms", 0)))
             if obj.get("status") == "fail":
                 fails.append(obj.get("name"))
     return tests, durs, fails
 
-def compute_p95(durations: list[int]) -> int:
-    if not durations:
+def compute_p95(durations: Sequence[object]) -> int:
+    normalized = [_normalize_duration(value) for value in durations]
+    if not normalized:
         return 0
-    if len(durations) == 1:
-        return int(durations[0])
+    if len(normalized) == 1:
+        return normalized[0]
 
-    sorted_durations = sorted(durations)
+    sorted_durations = sorted(normalized)
     sample_count = len(sorted_durations)
 
     if sample_count < 20:
