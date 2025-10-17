@@ -86,7 +86,36 @@ def read_event_body(event_path: Path) -> str | None:
 
 
 def validate_priority_score(body: str | None) -> bool:
-    return True
+    if body is None:
+        return False
+
+    header = "Priority Score:"
+    for raw_line in body.splitlines():
+        line = raw_line.strip()
+        if not line.startswith(header):
+            continue
+
+        remainder = line[len(header) :].strip()
+        if not remainder or remainder.startswith("<!--"):
+            continue
+
+        if "/" not in remainder:
+            continue
+
+        score_text, reason = (part.strip() for part in remainder.split("/", 1))
+        if not score_text.isdigit():
+            continue
+
+        score = int(score_text)
+        if score < 1 or score > 5:
+            continue
+
+        if not reason or reason.startswith("<!--"):
+            continue
+
+        return True
+
+    return False
 
 
 def main() -> int:

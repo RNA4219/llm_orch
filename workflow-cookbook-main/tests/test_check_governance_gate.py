@@ -35,6 +35,15 @@ def test_find_forbidden_matches(changed_paths, patterns, expected):
     [
         "Priority Score: 5 / 安全性強化",
         "Priority Score: 1 / 即応性向上",
+    ],
+)
+def test_validate_priority_score_accepts_valid_format(body):
+    assert validate_priority_score(body) is True
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
         "Priority Score: 3",
         "Priority Score: / 理由",
         "Priority Score: abc / 理由",
@@ -44,8 +53,8 @@ def test_find_forbidden_matches(changed_paths, patterns, expected):
         None,
     ],
 )
-def test_validate_priority_score_is_now_noop(body):
-    assert validate_priority_score(body) is True
+def test_validate_priority_score_rejects_invalid_format(body):
+    assert validate_priority_score(body) is False
 
 
 def test_load_forbidden_patterns(tmp_path):
