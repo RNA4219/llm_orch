@@ -17,6 +17,7 @@ jobs:
       - uses: actions/download-artifact@v4
         id: fetch-logs
         if: ${{ github.event_name == 'workflow_run' }}
+        continue-on-error: true
         with:
           name: test-logs
           path: logs
