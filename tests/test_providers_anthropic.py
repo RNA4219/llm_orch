@@ -69,11 +69,15 @@ def run_chat(
     return captured, response
 
 
-def build_anthropic_provider(monkeypatch: pytest.MonkeyPatch) -> AnthropicProvider:
+def build_anthropic_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    base_url: str = "https://api.anthropic.com",
+) -> AnthropicProvider:
     provider_def = ProviderDef(
         name="anthropic",
         type="anthropic",
-        base_url="https://api.anthropic.com",
+        base_url=base_url,
         model="claude-3-sonnet",
         auth_env="ANTHROPIC_API_KEY",
         rpm=60,
@@ -146,6 +150,38 @@ def test_anthropic_payload_maps_openai_messages(monkeypatch: pytest.MonkeyPatch)
     assert response.content == "ok"
     assert response.usage_prompt_tokens == 1
     assert response.usage_completion_tokens == 2
+
+
+def test_anthropic_base_url_with_messages_adds_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = build_anthropic_provider(
+        monkeypatch, base_url="https://api.anthropic.com/messages"
+    )
+
+    captured, _ = run_chat(
+        provider,
+        monkeypatch,
+        messages=[{"role": "user", "content": "hello"}],
+    )
+
+    assert captured["url"] == "https://api.anthropic.com/v1/messages"
+
+
+def test_anthropic_base_url_custom_messages_adds_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = build_anthropic_provider(
+        monkeypatch, base_url="https://api.anthropic.com/custom/messages"
+    )
+
+    captured, _ = run_chat(
+        provider,
+        monkeypatch,
+        messages=[{"role": "user", "content": "hello"}],
+    )
+
+    assert captured["url"] == "https://api.anthropic.com/custom/v1/messages"
 
 
 def test_anthropic_payload_includes_tools(monkeypatch: pytest.MonkeyPatch) -> None:
