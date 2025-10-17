@@ -5,6 +5,7 @@ from typing import Sequence
 LOG = pathlib.Path("logs/test.jsonl")
 REPORT = pathlib.Path("reports/today.md")
 ISSUE_OUT = pathlib.Path("reports/issue_suggestions.md")
+FAIL_STATUSES = frozenset({"fail", "failed", "error"})
 
 def _normalize_duration(value: object) -> int:
     if isinstance(value, bool):
@@ -34,11 +35,14 @@ def load_results():
             if not stripped:
                 continue
             obj = json.loads(stripped)
-            tests.append(obj.get("name"))
+            name = obj.get("name")
+            tests.append(name)
             durs.append(_normalize_duration(obj.get("duration_ms", 0)))
             status = obj.get("status")
-            if isinstance(status, str) and status.lower() in {"fail", "failed", "error"}:
-                fails.append(obj.get("name"))
+            if isinstance(status, str):
+                normalized_status = status.strip().lower()
+                if normalized_status in FAIL_STATUSES:
+                    fails.append(name)
     return tests, durs, fails
 
 def compute_p95(durations: Sequence[object]) -> int:
