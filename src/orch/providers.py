@@ -88,6 +88,11 @@ class BaseProvider:
         tools: list[dict[str, Any]] | None = None,
         tool_choice: dict[str, Any] | str | None = None,
         function_call: dict[str, Any] | str | None = None,
+        top_p: float | None = None,
+        frequency_penalty: float | None = None,
+        presence_penalty: float | None = None,
+        logit_bias: dict[str, float] | None = None,
+        response_format: dict[str, Any] | None = None,
         **extra_options: Any,
     ) -> ProviderChatResponse:
         raise NotImplementedError
@@ -116,6 +121,11 @@ class OpenAICompatProvider(BaseProvider):
         tools: list[dict[str, Any]] | None = None,
         tool_choice: dict[str, Any] | str | None = None,
         function_call: dict[str, Any] | str | None = None,
+        top_p: float | None = None,
+        frequency_penalty: float | None = None,
+        presence_penalty: float | None = None,
+        logit_bias: dict[str, float] | None = None,
+        response_format: dict[str, Any] | None = None,
         **extra_options: Any,
     ) -> ProviderChatResponse:
         raw_base = self.defn.base_url.strip()
@@ -182,6 +192,16 @@ class OpenAICompatProvider(BaseProvider):
             payload["tool_choice"] = tool_choice
         if function_call is not None:
             payload["function_call"] = function_call
+        if top_p is not None:
+            payload["top_p"] = top_p
+        if frequency_penalty is not None:
+            payload["frequency_penalty"] = frequency_penalty
+        if presence_penalty is not None:
+            payload["presence_penalty"] = presence_penalty
+        if logit_bias is not None:
+            payload["logit_bias"] = logit_bias
+        if response_format is not None:
+            payload["response_format"] = response_format
         self._merge_extra_options(payload, extra_options)
         async with httpx.AsyncClient(timeout=60) as client:
             r = await client.post(url, headers=headers, json=payload)
@@ -217,6 +237,11 @@ class AnthropicProvider(BaseProvider):
         tools: list[dict[str, Any]] | None = None,
         tool_choice: dict[str, Any] | str | None = None,
         function_call: dict[str, Any] | str | None = None,
+        top_p: float | None = None,
+        frequency_penalty: float | None = None,
+        presence_penalty: float | None = None,
+        logit_bias: dict[str, float] | None = None,
+        response_format: dict[str, Any] | None = None,
         **extra_options: Any,
     ) -> ProviderChatResponse:
         base = self.defn.base_url.strip()
@@ -511,6 +536,11 @@ class OllamaProvider(BaseProvider):
         tools: list[dict[str, Any]] | None = None,
         tool_choice: dict[str, Any] | str | None = None,
         function_call: dict[str, Any] | str | None = None,
+        top_p: float | None = None,
+        frequency_penalty: float | None = None,
+        presence_penalty: float | None = None,
+        logit_bias: dict[str, float] | None = None,
+        response_format: dict[str, Any] | None = None,
         **extra_options: Any,
     ) -> ProviderChatResponse:
         url = f"{self.defn.base_url.rstrip('/')}/api/chat"
@@ -558,6 +588,11 @@ class DummyProvider(BaseProvider):
         tools: list[dict[str, Any]] | None = None,
         tool_choice: dict[str, Any] | str | None = None,
         function_call: dict[str, Any] | str | None = None,
+        top_p: float | None = None,
+        frequency_penalty: float | None = None,
+        presence_penalty: float | None = None,
+        logit_bias: dict[str, float] | None = None,
+        response_format: dict[str, Any] | None = None,
         **extra_options: Any,
     ) -> ProviderChatResponse:
         # simple echo-ish behavior for tests

@@ -315,6 +315,8 @@ def test_chat_forwards_extra_options(
 
     extra_options = {
         "top_p": 0.42,
+        "frequency_penalty": 1.25,
+        "presence_penalty": -0.5,
         "response_format": {"type": "json_object"},
     }
 
@@ -346,6 +348,8 @@ def test_chat_forwards_extra_options(
     provider_chat.assert_awaited_once()
     kwargs = provider_chat.await_args.kwargs
     assert kwargs["top_p"] == extra_options["top_p"]
+    assert kwargs["frequency_penalty"] == extra_options["frequency_penalty"]
+    assert kwargs["presence_penalty"] == extra_options["presence_penalty"]
     assert kwargs["response_format"] == extra_options["response_format"]
 
     from src.orch.providers import OpenAICompatProvider
@@ -382,6 +386,8 @@ def test_chat_forwards_extra_options(
     assert openai_calls
     payload = openai_calls[0]["json"]
     assert payload["top_p"] == extra_options["top_p"]
+    assert payload["frequency_penalty"] == extra_options["frequency_penalty"]
+    assert payload["presence_penalty"] == extra_options["presence_penalty"]
     assert payload["response_format"] == extra_options["response_format"]
 
 

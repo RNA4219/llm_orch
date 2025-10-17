@@ -24,6 +24,11 @@ class ChatRequest(BaseModel):
     stream: Optional[bool] = False
     tools: Optional[List[Dict[str, Any]]] = None
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
+    top_p: Optional[float] = None
+    frequency_penalty: Optional[float] = None
+    presence_penalty: Optional[float] = None
+    logit_bias: Optional[Dict[str, float]] = None
+    response_format: Optional[Dict[str, Any]] = None
 
 
 class ProviderChatResponse(BaseModel):

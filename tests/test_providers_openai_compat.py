@@ -22,6 +22,9 @@ def _run_chat_and_capture(
     tools: list[dict[str, Any]] | None = None,
     tool_choice: dict[str, Any] | None = None,
     function_call: dict[str, Any] | str | None = None,
+    top_p: float | None = None,
+    frequency_penalty: float | None = None,
+    presence_penalty: float | None = None,
 ) -> tuple[dict[str, Any], Any]:
     provider = OpenAICompatProvider(provider_def)
     monkeypatch.setenv(env_name, "secret")
@@ -61,6 +64,9 @@ def _run_chat_and_capture(
             tools=tools,
             tool_choice=tool_choice,
             function_call=function_call,
+            top_p=top_p,
+            frequency_penalty=frequency_penalty,
+            presence_penalty=presence_penalty,
         )
 
     response = asyncio.run(run_chat())
@@ -245,3 +251,31 @@ def test_openai_compat_includes_function_call_in_payload(
 
     request_json = cast(dict[str, Any], captured["json"])
     assert request_json["function_call"] == function_call
+
+
+def test_openai_compat_includes_sampling_parameters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider_def = ProviderDef(
+        name="openai",
+        type="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-4o",
+        auth_env="OPENAI_API_KEY",
+        rpm=60,
+        concurrency=1,
+    )
+
+    captured, _ = _run_chat_and_capture(
+        provider_def,
+        "OPENAI_API_KEY",
+        monkeypatch,
+        top_p=0.1,
+        frequency_penalty=1.5,
+        presence_penalty=-0.25,
+    )
+
+    request_json = cast(dict[str, Any], captured["json"])
+    assert request_json["top_p"] == 0.1
+    assert request_json["frequency_penalty"] == 1.5
+    assert request_json["presence_penalty"] == -0.25
