@@ -34,12 +34,57 @@ def test_analyze_main_generates_report(tmp_path, monkeypatch):
     assert report_path.exists(), "Report file should be generated"
 
 
+def test_analyze_main_counts_error_status_as_failure(tmp_path, monkeypatch):
+    log_path = tmp_path / "logs" / "test.jsonl"
+    report_path = tmp_path / "reports" / "today.md"
+    issue_path = tmp_path / "reports" / "issue_suggestions.md"
+
+    log_path.parent.mkdir(parents=True)
+    report_path.parent.mkdir(parents=True)
+
+    records = [
+        {"name": "sample::error_case", "duration_ms": 12, "status": "error"},
+    ]
+
+    with log_path.open("w", encoding="utf-8") as fp:
+        for record in records:
+            fp.write(json.dumps(record) + "\n")
+
+    monkeypatch.setattr(analyze, "LOG", log_path)
+    monkeypatch.setattr(analyze, "REPORT", report_path)
+    monkeypatch.setattr(analyze, "ISSUE_OUT", issue_path)
+
+    analyze.main()
+
+    report_text = report_path.read_text(encoding="utf-8")
+    assert "- Failures: 1" in report_text
+
+
 def test_load_results_counts_error_status_as_failure(tmp_path, monkeypatch):
     log_path = tmp_path / "logs" / "test.jsonl"
     log_path.parent.mkdir(parents=True)
 
     records = [
         {"name": "sample::error_case", "duration_ms": 10, "status": "error"},
+    ]
+
+    with log_path.open("w", encoding="utf-8") as fp:
+        for record in records:
+            fp.write(json.dumps(record) + "\n")
+
+    monkeypatch.setattr(analyze, "LOG", log_path)
+
+    _, _, fails = analyze.load_results()
+
+    assert fails == ["sample::error_case"]
+
+
+def test_load_results_strips_status_whitespace(tmp_path, monkeypatch):
+    log_path = tmp_path / "logs" / "test.jsonl"
+    log_path.parent.mkdir(parents=True)
+
+    records = [
+        {"name": "sample::error_case", "duration_ms": 8, "status": " error "},
     ]
 
     with log_path.open("w", encoding="utf-8") as fp:

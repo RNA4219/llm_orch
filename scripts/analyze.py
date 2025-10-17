@@ -6,6 +6,17 @@ LOG = pathlib.Path("logs/test.jsonl")
 REPORT = pathlib.Path("reports/today.md")
 ISSUE_OUT = pathlib.Path("reports/issue_suggestions.md")
 
+FAIL_STATUSES = frozenset({"fail", "failed", "error"})
+
+
+def _normalize_status(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    if not normalized:
+        return None
+    return normalized
+
 def _normalize_duration(value: object) -> int:
     if isinstance(value, bool):
         return int(value)
@@ -36,8 +47,8 @@ def load_results():
             obj = json.loads(stripped)
             tests.append(obj.get("name"))
             durs.append(_normalize_duration(obj.get("duration_ms", 0)))
-            status = obj.get("status")
-            if isinstance(status, str) and status.lower() in {"fail", "failed", "error"}:
+            status = _normalize_status(obj.get("status"))
+            if status in FAIL_STATUSES:
                 fails.append(obj.get("name"))
     return tests, durs, fails
 
