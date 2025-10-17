@@ -46,6 +46,15 @@ def load_results():
             if not stripped:
                 continue
             obj = json.loads(stripped)
+            status_value = None
+            for key in _STATUS_KEYS:
+                value = obj.get(key)
+                if isinstance(value, str):
+                    status_value = value
+                    break
+            status_lower = status_value.lower() if status_value else ""
+            if not status_lower or status_lower in _SKIPPED_STATUSES:
+                continue
             tests.append(obj.get("name"))
             durs.append(_normalize_duration(obj.get("duration_ms", 0)))
             status_value = None
