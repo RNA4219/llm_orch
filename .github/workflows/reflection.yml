@@ -15,10 +15,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
+        id: fetch-logs
         if: ${{ github.event_name == 'workflow_run' }}
+        continue-on-error: true
         with:
           name: test-logs
           path: logs
+      - name: Warn when logs artifact is unavailable
+        if: ${{ steps.fetch-logs.outcome == 'failure' }}
+        run: |
+          echo "::warning::test-logs artifact not found; continuing without log import"
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
