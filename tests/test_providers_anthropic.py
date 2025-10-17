@@ -174,6 +174,21 @@ def test_anthropic_payload_includes_supported_sampling_parameters(
     assert "presence_penalty" not in request_json
 
 
+def test_anthropic_payload_sets_max_output_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = build_anthropic_provider(monkeypatch)
+
+    captured, _ = run_chat(
+        provider,
+        monkeypatch,
+        messages=[{"role": "user", "content": "hello"}],
+        max_tokens=321,
+    )
+
+    request_json = cast(dict[str, Any], captured["json"])
+    assert request_json["max_output_tokens"] == 321
+    assert "max_tokens" not in request_json
+
+
 def test_anthropic_base_url_with_messages_adds_version(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

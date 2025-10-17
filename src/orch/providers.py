@@ -533,7 +533,7 @@ class AnthropicProvider(BaseProvider):
 
         payload: dict[str, Any] = {
             "model": self.defn.model or model,
-            "max_tokens": max_tokens,
+            "max_output_tokens": max_tokens,
             "temperature": temperature,
             "messages": mapped,
         }
