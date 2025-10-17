@@ -36,7 +36,8 @@ def load_results():
             obj = json.loads(stripped)
             tests.append(obj.get("name"))
             durs.append(_normalize_duration(obj.get("duration_ms", 0)))
-            if obj.get("status") == "fail":
+            status = obj.get("status")
+            if isinstance(status, str) and status.lower() in {"fail", "failed", "error"}:
                 fails.append(obj.get("name"))
     return tests, durs, fails
 

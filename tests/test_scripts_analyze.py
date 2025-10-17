@@ -34,6 +34,25 @@ def test_analyze_main_generates_report(tmp_path, monkeypatch):
     assert report_path.exists(), "Report file should be generated"
 
 
+def test_load_results_counts_error_status_as_failure(tmp_path, monkeypatch):
+    log_path = tmp_path / "logs" / "test.jsonl"
+    log_path.parent.mkdir(parents=True)
+
+    records = [
+        {"name": "sample::error_case", "duration_ms": 10, "status": "error"},
+    ]
+
+    with log_path.open("w", encoding="utf-8") as fp:
+        for record in records:
+            fp.write(json.dumps(record) + "\n")
+
+    monkeypatch.setattr(analyze, "LOG", log_path)
+
+    _, _, fails = analyze.load_results()
+
+    assert fails == ["sample::error_case"]
+
+
 def test_analyze_main_handles_blank_lines(tmp_path, monkeypatch):
     log_path = tmp_path / "logs" / "test.jsonl"
     report_path = tmp_path / "reports" / "today.md"
