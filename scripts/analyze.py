@@ -36,8 +36,6 @@ def load_results():
             if not stripped:
                 continue
             obj = json.loads(stripped)
-            tests.append(obj.get("name"))
-            durs.append(_normalize_duration(obj.get("duration_ms", 0)))
             status = obj.get("status")
             if isinstance(status, str) and status.lower() in FAIL_STATUSES:
                 fails.append(obj.get("name"))
