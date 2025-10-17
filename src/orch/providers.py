@@ -140,7 +140,13 @@ class OpenAICompatProvider(BaseProvider):
         has_chat_completions_suffix = bool(
             len(path_segments) >= 2 and path_segments[-2:] == ["chat", "completions"]
         )
-        segments_for_evaluation = path_segments[:-2] if has_chat_completions_suffix else path_segments
+        has_chat_suffix = bool(path_segments and path_segments[-1].lower() == "chat")
+        if has_chat_completions_suffix:
+            segments_for_evaluation = path_segments[:-2]
+        elif has_chat_suffix:
+            segments_for_evaluation = path_segments[:-1]
+        else:
+            segments_for_evaluation = path_segments
         hostname = (parsed.hostname or "").lower()
         azure_compat_suffixes = (
             "openai.azure.com",
