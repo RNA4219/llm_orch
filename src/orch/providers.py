@@ -458,6 +458,14 @@ class AnthropicProvider(BaseProvider):
             if not content_blocks:
                 content_blocks.append({"type": "text", "text": ""})
             mapped.append({"role": role, "content": content_blocks})
+        function_call_mode: str | None
+        if isinstance(function_call, str):
+            function_call_mode = function_call
+        else:
+            function_call_mode = None
+
+        disable_tools = function_call_mode == "none"
+
         payload: dict[str, Any] = {
             "model": self.defn.model or model,
             "max_tokens": max_tokens,
@@ -466,11 +474,13 @@ class AnthropicProvider(BaseProvider):
         }
         if system_messages:
             payload["system"] = "\n\n".join(system_messages)
-        if tools is not None:
+        if tools is not None and not disable_tools:
             payload["tools"] = _normalize_anthropic_tools(tools)
 
         normalized_tool_choice: dict[str, Any] | str | None = None
-        if tool_choice is not None:
+        if disable_tools:
+            normalized_tool_choice = "none"
+        elif tool_choice is not None:
             if isinstance(tool_choice, str):
                 normalized_tool_choice = tool_choice
             elif isinstance(tool_choice, dict):
@@ -483,6 +493,8 @@ class AnthropicProvider(BaseProvider):
                 normalized_tool_choice = _normalize_anthropic_tool_choice(
                     {"type": "function", "function": {"name": name_candidate}}
                 )
+        elif function_call_mode is not None:
+            normalized_tool_choice = function_call_mode
 
         if normalized_tool_choice is not None:
             payload["tool_choice"] = normalized_tool_choice
