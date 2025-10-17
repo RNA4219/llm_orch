@@ -6,10 +6,10 @@ PID=$!
 trap 'kill $PID >/dev/null 2>&1' EXIT
 ready=false
 for _ in {1..10}; do
-  if curl -fs http://localhost:31001/healthz >/dev/null; then
+  curl -f -s http://localhost:31001/healthz >/dev/null && {
     ready=true
     break
-  fi
+  }
   sleep 1
 done
 
