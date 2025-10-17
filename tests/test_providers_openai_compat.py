@@ -133,31 +133,22 @@ def test_openai_compat_preserves_query_parameters(monkeypatch: pytest.MonkeyPatc
     assert response.content == "ok"
 
 
-def test_openai_compat_azure_sets_api_key_header(monkeypatch: pytest.MonkeyPatch) -> None:
-    provider_def = ProviderDef(
-        name="azure-openai",
-        type="openai",
-        base_url="https://example.openai.azure.com/openai/deployments/foo",
-        model="gpt-4o",
-        auth_env="AZURE_OPENAI_API_KEY",
-        rpm=60,
-        concurrency=1,
-    )
-
-    captured, _ = _run_chat_and_capture(provider_def, "AZURE_OPENAI_API_KEY", monkeypatch)
-
-    headers = cast(dict[str, str], captured["headers"])
-    assert headers["api-key"] == "secret"
-    assert "Authorization" not in headers
-
-
-def test_openai_compat_azure_with_port_uses_api_key_header(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "https://example.openai.azure.com/openai/deployments/foo",
+        "https://example.openai.azure.com:443/openai/deployments/foo",
+        "https://example.openai.azure.us/openai/deployments/foo",
+        "https://example.openai.azure.cn/openai/deployments/foo",
+    ],
+)
+def test_openai_compat_azure_variants_use_api_key_header(
+    base_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     provider_def = ProviderDef(
         name="azure-openai",
         type="openai",
-        base_url="https://example.openai.azure.com:443/openai/deployments/foo",
+        base_url=base_url,
         model="gpt-4o",
         auth_env="AZURE_OPENAI_API_KEY",
         rpm=60,

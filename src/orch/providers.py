@@ -138,7 +138,14 @@ class OpenAICompatProvider(BaseProvider):
         normalized_path = path.rstrip("/")
         path_segments = [segment for segment in normalized_path.split("/") if segment]
         hostname = (parsed.hostname or "").lower()
-        azure_compat_suffixes = ("openai.azure.com", "cognitiveservices.azure.com")
+        azure_compat_suffixes = (
+            "openai.azure.com",
+            "openai.azure.us",
+            "openai.azure.cn",
+            "cognitiveservices.azure.com",
+            "cognitiveservices.azure.us",
+            "cognitiveservices.azure.cn",
+        )
 
         def _matches_suffix(host: str, suffix: str) -> bool:
             return host == suffix or host.endswith(f".{suffix}")
