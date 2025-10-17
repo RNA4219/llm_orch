@@ -258,3 +258,41 @@ def test_convert_junit_to_jsonl_normalizes_error_status(tmp_path: Path) -> None:
             "status": "fail",
         }
     ]
+
+
+def test_convert_junit_to_jsonl_handles_nested_testsuites_within_testsuites(
+    tmp_path: Path,
+) -> None:
+    xml_path = tmp_path / "pytest.xml"
+    output_path = tmp_path / "out.jsonl"
+    write_file(
+        xml_path,
+        """
+        <testsuites name="root">
+            <testsuite name="parent">
+                <testsuite name="child">
+                    <testcase classname="pkg.TestCase" name="test_inner" time="0.123" />
+                </testsuite>
+                <testcase classname="pkg.TestCase" name="test_sibling" time="0.456" />
+            </testsuite>
+        </testsuites>
+        """,
+    )
+
+    convert_junit_to_jsonl(xml_path, output_path)
+
+    records = read_json_lines(output_path)
+    assert records == [
+        {
+            "classname": "pkg.TestCase",
+            "name": "test_inner",
+            "status": "passed",
+            "duration_ms": 123,
+        },
+        {
+            "classname": "pkg.TestCase",
+            "name": "test_sibling",
+            "status": "passed",
+            "duration_ms": 456,
+        },
+    ]

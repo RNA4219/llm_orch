@@ -38,8 +38,20 @@ def _parse_duration_ms(time_str: str | None) -> int | None:
 
 
 def _iter_testcases(root: ET.Element) -> Iterable[ET.Element]:
-    if root.tag == "testcase":
+    tag = root.tag
+
+    if tag == "testcase":
         yield root
+        return
+
+    if tag in {"testsuite", "testsuites"}:
+        for child in root:
+            if child.tag == "testcase":
+                yield child
+            elif child.tag in {"testsuite", "testsuites"}:
+                yield from _iter_testcases(child)
+            else:
+                yield from _iter_testcases(child)
         return
 
     for child in root:
