@@ -9,6 +9,10 @@ import httpx
 from .router import ProviderDef
 from .types import ProviderChatResponse
 
+
+class UnsupportedContentBlockError(ValueError):
+    """Raised when a request includes a content block unsupported by a provider."""
+
 def _normalize_anthropic_tool(tool: dict[str, Any]) -> dict[str, Any]:
     tool_type = tool.get("type")
     if tool_type is None:
@@ -295,8 +299,8 @@ class AnthropicProvider(BaseProvider):
                     "Anthropic content blocks require a non-empty string 'type'."
                 )
             if block_type not in textual_block_types:
-                raise ValueError(
-                    "Anthropic text-like blocks must use 'text' or 'output_text' types."
+                raise UnsupportedContentBlockError(
+                    f"Anthropic provider does not support content block type '{block_type}'."
                 )
             block_text = block.get("text")
             if not isinstance(block_text, str):

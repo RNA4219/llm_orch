@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from .metrics import MetricsLogger
-from .providers import ProviderRegistry
+from .providers import ProviderRegistry, UnsupportedContentBlockError
 from .rate_limiter import ProviderGuards
 from .router import RoutePlanner, load_config
 from .types import ChatRequest, ProviderChatResponse, chat_response_from_provider
@@ -199,7 +199,11 @@ async def chat_completions(req: Request, body: ChatRequest):
                     last_err = str(exc)
                     last_provider = provider_name
                     last_model = prov.model or body.model
-                    if isinstance(exc, httpx.HTTPStatusError):
+                    if isinstance(exc, UnsupportedContentBlockError):
+                        abort_error = last_err or "unsupported content block"
+                        abort_status = 400
+                        should_abort = True
+                    elif isinstance(exc, httpx.HTTPStatusError):
                         status, message = _http_status_error_details(exc)
                         if status is not None and status != 429 and 400 <= status < 500:
                             abort_error = message

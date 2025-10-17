@@ -1626,3 +1626,68 @@ def test_chat_metrics_retry_success_logs_final_result_once(
     record = metrics_mock.await_args_list[0].args[0]
     assert record["ok"] is True
     assert record["retries"] == 1
+
+def test_anthropic_rejects_image_url_block(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    providers_file = route_test_config / "providers.dummy.toml"
+    providers_file.write_text(
+        """
+[claude]
+type = "anthropic"
+model = "claude-3-opus"
+base_url = "https://anthropic.invalid"
+rpm = 60
+concurrency = 1
+""".strip()
+    )
+    router_file = route_test_config / "router.yaml"
+    router_file.write_text(
+        """
+defaults:
+  temperature: 0.2
+  max_tokens: 64
+  task_header: "x-orch-task-kind"
+  task_header_value: "PLAN"
+routes:
+  PLAN:
+    primary: claude
+""".strip()
+    )
+
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+    records = capture_metric_records(server_module, monkeypatch)
+
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "claude-3-opus",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "look"},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": "https://example.com/image.png"},
+                        },
+                    ],
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 400
+    payload = response.json()
+    assert "error" in payload
+    assert "message" in payload["error"]
+    assert "image_url" in payload["error"]["message"]
+    assert records
+    assert_single_req_id(records)
+    final_record = records[-1]
+    assert final_record["status"] == 400
+    assert final_record["provider"] == "claude"
+    assert final_record["ok"] is False
+    assert final_record["retries"] == 0
