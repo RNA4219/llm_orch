@@ -41,6 +41,12 @@ class ProviderChatChoice(BaseModel):
     function_call: dict[str, Any] | None = None
     finish_reason: str | None = None
 
+    def __getitem__(self, key: str) -> Any:
+        data = self.model_dump(mode="python", exclude_none=True)
+        if key in data:
+            return data[key]
+        raise KeyError(key)
+
 
 class ProviderChatResponse(BaseModel):
     status_code: int = 200
