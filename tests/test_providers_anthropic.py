@@ -1,7 +1,7 @@
 import asyncio
 import sys
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, AsyncIterator, cast
 
 import httpx
 import pytest
@@ -10,7 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.orch.providers import AnthropicProvider, BaseProvider
+from src.orch.providers import AnthropicProvider, BaseProvider, ProviderStreamChunk
 from src.orch.router import ProviderDef
 from src.orch.types import ProviderChatResponse, chat_response_from_provider
 
@@ -88,6 +88,19 @@ def build_anthropic_provider(
     provider = AnthropicProvider(provider_def)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "secret")
     return provider
+
+
+async def _collect_stream_chunks(
+    provider: AnthropicProvider, events: list[dict[str, Any]]
+) -> list[ProviderStreamChunk]:
+    async def event_stream() -> AsyncIterator[dict[str, Any]]:
+        for event in events:
+            yield event
+
+    chunks: list[ProviderStreamChunk] = []
+    async for chunk in provider._normalize_stream_events(event_stream()):
+        chunks.append(chunk)
+    return chunks
 
 
 def test_anthropic_chat_normalizes_structured_messages(
@@ -862,3 +875,97 @@ def test_anthropic_tool_use_only_message_omits_content(
     message = openai_response["choices"][0]["message"]
     assert "content" not in message
     assert message.get("content") is None
+
+
+def test_anthropic_stream_normalizes_text_events(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = build_anthropic_provider(monkeypatch)
+    events = [
+        {"type": "message_start", "message": {"role": "assistant"}},
+        {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "text", "text": ""},
+        },
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": "hello"},
+        },
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": " world"},
+        },
+        {"type": "content_block_stop", "index": 0},
+        {"type": "message_delta", "delta": {"stop_reason": "end_turn"}},
+        {"type": "message_stop"},
+    ]
+
+    chunks = asyncio.run(_collect_stream_chunks(provider, events))
+
+    assert [chunk.event_type for chunk in chunks] == [
+        "message_start",
+        "delta",
+        "delta",
+        "message_stop",
+    ]
+    assert chunks[0].delta == {"role": "assistant"}
+    assert chunks[1].delta == {"content": "hello"}
+    assert chunks[2].delta == {"content": " world"}
+    assert chunks[-1].finish_reason == "stop"
+
+
+def test_anthropic_stream_yields_usage_and_stop_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = build_anthropic_provider(monkeypatch)
+    events = [
+        {"type": "message_start", "message": {"role": "assistant"}},
+        {
+            "type": "message_delta",
+            "delta": {
+                "stop_reason": "tool_use",
+                "usage": {"input_tokens": 3, "output_tokens": 7},
+            },
+        },
+        {"type": "message_stop"},
+    ]
+
+    chunks = asyncio.run(_collect_stream_chunks(provider, events))
+
+    assert [chunk.event_type for chunk in chunks] == [
+        "message_start",
+        "usage",
+        "message_stop",
+    ]
+    assert chunks[1].usage == {"input_tokens": 3, "output_tokens": 7}
+    assert chunks[-1].finish_reason == "tool_calls"
+
+
+def test_anthropic_stream_emits_rate_limit_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = build_anthropic_provider(monkeypatch)
+    events = [
+        {
+            "type": "error",
+            "error": {
+                "type": "rate_limit_error",
+                "message": "Too many requests",
+            },
+            "retry_after": 1.25,
+        }
+    ]
+
+    chunks = asyncio.run(_collect_stream_chunks(provider, events))
+
+    assert len(chunks) == 1
+    chunk = chunks[0]
+    assert chunk.event_type == "error"
+    assert chunk.error == {
+        "type": "rate_limit_error",
+        "message": "Too many requests",
+        "retry_after": 1.25,
+    }

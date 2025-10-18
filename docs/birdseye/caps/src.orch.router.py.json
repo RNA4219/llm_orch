@@ -1,0 +1,21 @@
+{
+  "id": "src/orch/router.py",
+  "role": "application",
+  "public_api": [
+    "load_config(config_dir, use_dummy=False)",
+    "RoutePlanner.plan(task_kind)"
+  ],
+  "summary": "プロバイダ/ルート設定ファイルを読み込み、Pydanticバリデーションとdataclassに変換。RoutePlannerでtask→ルート決定、再利用可能なロード監視情報(mtimes/watch_paths)も保持。",
+  "deps_out": [
+    "src/orch/providers.py"
+  ],
+  "deps_in": [
+    "src/orch/server.py"
+  ],
+  "risks": [
+    "設定ファイルの不整合時はValidationError/ValueErrorを送出"
+  ],
+  "tests": [
+    "tests/test_router_config.py"
+  ]
+}

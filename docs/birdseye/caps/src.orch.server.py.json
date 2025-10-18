@@ -1,0 +1,24 @@
+{
+  "id": "src/orch/server.py",
+  "role": "entrypoint",
+  "public_api": [
+    "GET /healthz",
+    "POST /v1/chat/completions"
+  ],
+  "summary": "FastAPI アプリのメイン。設定読込→RoutePlanner/ProviderGuardsを初期化し、healthzとchat completionsエンドポイントを提供。ストリーム無効時は400で応答し、メトリクスをJSONLに記録。",
+  "deps_out": [
+    "src/orch/router.py",
+    "src/orch/providers.py",
+    "src/orch/rate_limiter.py",
+    "src/orch/metrics.py",
+    "src/orch/types.py"
+  ],
+  "deps_in": [],
+  "risks": [
+    "stream: true を受けると明示的に400を返すためストリーミング要求はサポート外"
+  ],
+  "tests": [
+    "tests/test_server_routes.py",
+    "tests/test_health.py"
+  ]
+}
