@@ -1,20 +1,20 @@
 {
-  "generated_at": "2025-10-18T16:11:41Z",
+  "generated_at": "2025-10-18T16:35:55Z",
   "nodes": {
     "src/orch/server.py": {
       "role": "entrypoint",
       "caps": "docs/birdseye/caps/src.orch.server.py.json",
-      "mtime": "2024-10-10T00:00:00Z"
+      "mtime": "2025-10-18T16:35:55Z"
     },
     "src/orch/router.py": {
       "role": "application",
       "caps": "docs/birdseye/caps/src.orch.router.py.json",
-      "mtime": "2024-10-10T00:00:00Z"
+      "mtime": "2025-10-18T16:35:55Z"
     },
     "src/orch/providers/__init__.py": {
       "role": "application",
       "caps": "docs/birdseye/caps/src.orch.providers.__init__.py.json",
-      "mtime": "2024-10-10T00:00:00Z"
+      "mtime": "2025-10-18T16:35:55Z"
     }
   },
   "edges": [

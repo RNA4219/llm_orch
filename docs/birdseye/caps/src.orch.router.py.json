@@ -7,7 +7,7 @@
   ],
   "summary": "プロバイダ/ルート設定ファイルを読み込み、Pydanticバリデーションとdataclassに変換。RoutePlannerでtask→ルート決定、再利用可能なロード監視情報(mtimes/watch_paths)も保持。",
   "deps_out": [
-    "src/orch/providers.py"
+    "src/orch/providers/__init__.py"
   ],
   "deps_in": [
     "src/orch/server.py"
