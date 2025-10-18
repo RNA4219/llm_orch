@@ -65,8 +65,14 @@ class ProviderStreamChoice(BaseModel):
 class ProviderStreamChunk(BaseModel):
     model_config = ConfigDict(extra="allow")
 
+    event_type: str | None = None
+    index: int | None = None
+    delta: dict[str, Any] | str | None = None
+    finish_reason: str | None = None
     choices: list[ProviderStreamChoice] = Field(default_factory=list)
     usage: dict[str, int] | None = None
+    error: dict[str, Any] | None = None
+    raw: dict[str, Any] | None = None
 
 
 class ProviderChatResponse(BaseModel):
