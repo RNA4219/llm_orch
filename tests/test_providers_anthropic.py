@@ -11,6 +11,12 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.orch.providers import AnthropicProvider, BaseProvider, ProviderStreamChunk
+
+
+def test_anthropic_provider_reexport() -> None:
+    from src.orch.providers.anthropic import AnthropicProvider as ModuleProvider
+
+    assert ModuleProvider is AnthropicProvider
 from src.orch.router import ProviderDef
 from src.orch.types import ProviderChatResponse, chat_response_from_provider
 
