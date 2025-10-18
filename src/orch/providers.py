@@ -1,8 +1,9 @@
 import json
 import os
 import re
+from dataclasses import dataclass
 from urllib.parse import urlparse, urlunparse
-from typing import Dict, Any, List
+from typing import Any, AsyncIterator, Dict, List
 
 import httpx
 
@@ -12,6 +13,17 @@ from .types import ProviderChatResponse
 
 class UnsupportedContentBlockError(ValueError):
     """Raised when a request includes a content block unsupported by a provider."""
+
+
+@dataclass(slots=True)
+class ProviderStreamChunk:
+    event_type: str
+    index: int | None = None
+    delta: dict[str, Any] | None = None
+    finish_reason: str | None = None
+    usage: dict[str, int] | None = None
+    error: dict[str, Any] | None = None
+    raw: dict[str, Any] | None = None
 
 def _normalize_anthropic_tool(tool: dict[str, Any]) -> dict[str, Any]:
     tool_type = tool.get("type")
@@ -290,6 +302,101 @@ class OpenAICompatProvider(BaseProvider):
         )
 
 class AnthropicProvider(BaseProvider):
+    @staticmethod
+    def _map_stop_reason(raw: str | None) -> str | None:
+        if raw is None:
+            return None
+        if raw == "tool_use":
+            return "tool_calls"
+        if raw in {"max_tokens", "message_limit"}:
+            return "length"
+        if raw in {"end_turn", "stop_sequence"}:
+            return "stop"
+        return raw
+
+    async def _normalize_stream_events(
+        self, events: AsyncIterator[dict[str, Any]]
+    ) -> AsyncIterator[ProviderStreamChunk]:
+        stop_reason: str | None = None
+        async for event in events:
+            event_type = event.get("type")
+            if not isinstance(event_type, str):
+                continue
+            if event_type == "message_start":
+                stop_reason = None
+                message = event.get("message")
+                role = "assistant"
+                if isinstance(message, dict):
+                    raw_role = message.get("role")
+                    if isinstance(raw_role, str) and raw_role:
+                        role = raw_role
+                yield ProviderStreamChunk(
+                    event_type="message_start",
+                    delta={"role": role},
+                    raw=event,
+                )
+                continue
+            if event_type == "content_block_delta":
+                index_value = event.get("index")
+                block_delta = event.get("delta")
+                if not isinstance(block_delta, dict):
+                    continue
+                delta_type = block_delta.get("type")
+                if delta_type == "text_delta":
+                    text_value = block_delta.get("text")
+                    if isinstance(text_value, str) and text_value:
+                        normalized_index = index_value if isinstance(index_value, int) else 0
+                        yield ProviderStreamChunk(
+                            event_type="delta",
+                            index=normalized_index,
+                            delta={"content": text_value},
+                            raw=event,
+                        )
+                continue
+            if event_type == "message_delta":
+                delta_payload = event.get("delta")
+                if not isinstance(delta_payload, dict):
+                    continue
+                stop_candidate = delta_payload.get("stop_reason")
+                if isinstance(stop_candidate, str):
+                    stop_reason = stop_candidate
+                usage_payload = delta_payload.get("usage")
+                if isinstance(usage_payload, dict):
+                    usage: dict[str, int] = {}
+                    prompt_tokens = usage_payload.get("input_tokens")
+                    completion_tokens = usage_payload.get("output_tokens")
+                    if isinstance(prompt_tokens, int):
+                        usage["input_tokens"] = prompt_tokens
+                    if isinstance(completion_tokens, int):
+                        usage["output_tokens"] = completion_tokens
+                    if usage:
+                        yield ProviderStreamChunk(
+                            event_type="usage",
+                            usage=usage,
+                            raw=event,
+                        )
+                continue
+            if event_type == "message_stop":
+                yield ProviderStreamChunk(
+                    event_type="message_stop",
+                    finish_reason=self._map_stop_reason(stop_reason),
+                    raw=event,
+                )
+                stop_reason = None
+                continue
+            if event_type == "error":
+                error_info = event.get("error")
+                error_payload = dict(error_info) if isinstance(error_info, dict) else {}
+                retry_after = event.get("retry_after")
+                if isinstance(retry_after, (int, float)):
+                    error_payload.setdefault("retry_after", float(retry_after))
+                yield ProviderStreamChunk(
+                    event_type="error",
+                    error=error_payload or None,
+                    raw=event,
+                )
+                continue
+
     async def chat(
         self,
         model: str,
@@ -627,18 +734,9 @@ class AnthropicProvider(BaseProvider):
         else:
             content = None
         finish_reason_raw = data.get("stop_reason")
-        finish_reason: str | None
-        if isinstance(finish_reason_raw, str):
-            if finish_reason_raw == "tool_use":
-                finish_reason = "tool_calls"
-            elif finish_reason_raw in {"max_tokens", "message_limit"}:
-                finish_reason = "length"
-            elif finish_reason_raw in {"end_turn", "stop_sequence"}:
-                finish_reason = "stop"
-            else:
-                finish_reason = finish_reason_raw
-        else:
-            finish_reason = None
+        finish_reason = self._map_stop_reason(
+            finish_reason_raw if isinstance(finish_reason_raw, str) else None
+        )
         normalized_tool_calls = tool_calls or None
         usage = data.get("usage") or {}
         response_model = data.get("model") or self.defn.model or model
