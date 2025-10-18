@@ -3,9 +3,9 @@ owner: your-handle
 status: active
 
 slo:
-  lead_time_p95_hours: 24
+  lead_time_p95_hours: 72
   mttr_p95_minutes: 60
-  change_failure_rate_max: 0.2
+  change_failure_rate_max: 0.10
 
 permissions:
   allow:
