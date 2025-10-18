@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from .metrics import MetricsLogger
 from .providers import ProviderRegistry, UnsupportedContentBlockError
-from .rate_limiter import ProviderGuards
+from .rate_limiter import Guard, ProviderGuards
 from .router import RouteDef, RoutePlanner, load_config
 from .types import ChatRequest, ProviderChatResponse, chat_response_from_provider
 
@@ -379,7 +379,7 @@ async def chat_completions(req: Request, body: ChatRequest):
                         **provider_kwargs,
                     )
                 except Exception as exc:
-                    if getattr(guard, "_tpm_bucket", None) is not None:
+                    if isinstance(guard, Guard) and getattr(guard, "_tpm_bucket", None) is not None:
                         guard.record_usage(
                             lease,
                             usage_prompt_tokens=0,
