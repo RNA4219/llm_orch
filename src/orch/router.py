@@ -21,6 +21,7 @@ class ProviderDef:
     auth_env: str | None
     rpm: int
     concurrency: int
+    tpm: int | None = None
 
 @dataclass
 class RouterDefaults:
@@ -194,6 +195,7 @@ def load_config(config_dir: str, use_dummy: bool=False) -> LoadedConfig:
             auth_env=d.get("auth_env"),
             rpm=int(d.get("rpm", 60)),
             concurrency=_read_concurrency(name, d.get("concurrency", 4)),
+            tpm=int(d["tpm"]) if d.get("tpm") is not None else None,
         )
     router_path = os.path.join(config_dir, "router.yaml")
     with open(router_path, "r", encoding="utf-8") as f:

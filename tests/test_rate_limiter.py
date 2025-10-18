@@ -9,6 +9,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import src.orch.rate_limiter as rate_limiter
 from src.orch.rate_limiter import Guard
+from src.orch.router import ProviderDef
 
 
 @pytest.fixture
@@ -161,3 +162,42 @@ async def test_guard_record_usage_wait_time(monkeypatch: pytest.MonkeyPatch) -> 
     usage_completion_tokens=60,
   )
   assert wait == pytest.approx(60.0)
+
+
+def test_provider_guards_passes_tpm(monkeypatch: pytest.MonkeyPatch) -> None:
+  created: list[tuple[int, int, int | None]] = []
+
+  class StubGuard:
+    def __init__(self, rpm: int, concurrency: int, tpm: int | None = None) -> None:
+      self.args = (rpm, concurrency, tpm)
+      created.append(self.args)
+
+  monkeypatch.setattr(rate_limiter, "Guard", StubGuard)
+
+  providers = {
+    "alpha": ProviderDef(
+      name="alpha",
+      type="mock",
+      base_url="https://example.com",
+      model="gpt",
+      auth_env=None,
+      rpm=60,
+      concurrency=2,
+      tpm=5000,
+    ),
+    "beta": ProviderDef(
+      name="beta",
+      type="mock",
+      base_url="https://example.com",
+      model="gpt",
+      auth_env=None,
+      rpm=120,
+      concurrency=4,
+      tpm=None,
+    ),
+  }
+
+  guards = rate_limiter.ProviderGuards(providers)
+
+  assert created == [(60, 2, 5000), (120, 4, None)]
+  assert isinstance(guards.get("alpha"), StubGuard)

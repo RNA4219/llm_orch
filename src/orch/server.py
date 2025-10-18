@@ -66,6 +66,39 @@ PROM_HISTOGRAM: defaultdict[tuple[str, str], dict[str, Any]] = defaultdict(
     _new_histogram_state
 )
 
+
+def _estimate_text_tokens(text: str) -> int:
+    normalized = text.strip()
+    if not normalized:
+        return 0
+    return max(len(normalized) // 4, 1)
+
+
+def _estimate_content_tokens(content: Any) -> int:
+    if isinstance(content, str):
+        return _estimate_text_tokens(content)
+    if isinstance(content, list):
+        total = 0
+        for item in content:
+            if isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str):
+                    total += _estimate_text_tokens(text)
+        return total
+    return 0
+
+
+def _estimate_prompt_tokens(messages: list[dict[str, Any]], fallback: int) -> int:
+    total = 0
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        total += _estimate_content_tokens(message.get("content"))
+    if total <= 0:
+        return max(int(fallback), 0)
+    return total
+
+
 cfg = load_config(CONFIG_DIR, use_dummy=USE_DUMMY)
 providers = ProviderRegistry(cfg.providers)
 guards = ProviderGuards(cfg.providers)
@@ -282,6 +315,8 @@ async def chat_completions(req: Request, body: ChatRequest):
         **additional_options,
     }
 
+    estimated_prompt_tokens = _estimate_prompt_tokens(normalized_messages, max_tokens)
+
     if body.stream:
         return await _stream_chat_response(
             model=body.model,
@@ -331,9 +366,11 @@ async def chat_completions(req: Request, body: ChatRequest):
         prov = providers.get(provider_name)
         guard = guards.get(provider_name)
         for attempt in range(1, MAX_PROVIDER_ATTEMPTS + 1):
-            async with guard:
+            should_abort = False
+            async with guard.acquire(
+                estimated_prompt_tokens=estimated_prompt_tokens
+            ) as lease:
                 attempt_count += 1
-                should_abort = False
                 try:
                     resp = await prov.chat(
                         body.model,
@@ -341,6 +378,7 @@ async def chat_completions(req: Request, body: ChatRequest):
                         **provider_kwargs,
                     )
                 except Exception as exc:
+                    planner.record_failure(provider_name)
                     last_err = str(exc)
                     last_provider = provider_name
                     last_model = prov.model or body.model
@@ -379,6 +417,12 @@ async def chat_completions(req: Request, body: ChatRequest):
                     latency_ms = int((time.perf_counter() - start) * 1000)
                     usage_prompt = resp.usage_prompt_tokens or 0
                     usage_completion = resp.usage_completion_tokens or 0
+                    guard.record_usage(
+                        lease,
+                        usage_prompt_tokens=usage_prompt,
+                        usage_completion_tokens=usage_completion,
+                    )
+                    planner.record_success(provider_name)
                     success_response = resp
                     last_provider = provider_name
                     last_model = resp.model or body.model or prov.model
