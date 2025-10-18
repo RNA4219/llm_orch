@@ -1,11 +1,14 @@
 import json
 import os
 import re
+from pathlib import Path
 from urllib.parse import urlparse, urlunparse
-from typing import Dict, Any, List
+from typing import Any, Dict, List
 
 import httpx
 
+# [ ] ollama移行完了
+__path__ = [str(Path(__file__).with_suffix(""))]
 from .router import ProviderDef
 from .types import ProviderChatResponse
 
@@ -652,74 +655,6 @@ class AnthropicProvider(BaseProvider):
             usage_completion_tokens=usage.get("output_tokens", 0),
         )
 
-class OllamaProvider(BaseProvider):
-    async def chat(
-        self,
-        model: str,
-        messages: List[dict[str, Any]],
-        temperature=0.2,
-        max_tokens=2048,
-        *,
-        tools: list[dict[str, Any]] | None = None,
-        tool_choice: dict[str, Any] | str | None = None,
-        function_call: dict[str, Any] | str | None = None,
-        top_p: float | None = None,
-        frequency_penalty: float | None = None,
-        presence_penalty: float | None = None,
-        logit_bias: dict[str, float] | None = None,
-        response_format: dict[str, Any] | None = None,
-        **extra_options: Any,
-    ) -> ProviderChatResponse:
-        url = f"{self.defn.base_url.rstrip('/')}/api/chat"
-        _ = tools
-        _ = tool_choice
-        _ = function_call
-        options: dict[str, Any] = {"temperature": temperature, "num_predict": max_tokens}
-        payload = {
-            "model": self.defn.model or model,
-            "messages": messages,
-            "stream": False,
-            "options": options,
-        }
-        if response_format is not None:
-            if not isinstance(response_format, dict):
-                raise ValueError(
-                    "OllamaProvider requires response_format to be a dictionary."
-                )
-            format_type = response_format.get("type")
-            if format_type == "json_object":
-                payload["format"] = "json"
-            else:
-                raise ValueError(
-                    "OllamaProvider only supports response_format type 'json_object'."
-                )
-        cleaned_options: dict[str, Any] = {
-            key: value
-            for key, value in extra_options.items()
-            if key not in self._RESERVED_OPTION_KEYS and value is not None
-        }
-        if top_p is not None:
-            options["top_p"] = top_p
-            cleaned_options.pop("top_p", None)
-        if cleaned_options:
-            options.update(cleaned_options)
-        async with httpx.AsyncClient(timeout=120) as client:
-            r = await client.post(url, json=payload)
-            r.raise_for_status()
-            data = r.json()
-        # Ollama returns {"message":{"content":...}, "done":true, ...}
-        message = data.get("message") or {}
-        content = message.get("content")
-        finish_reason = data.get("finish_reason") or data.get("done_reason")
-        tool_calls = message.get("tool_calls")
-        return ProviderChatResponse(
-            status_code=r.status_code,
-            model=self.defn.model or model,
-            content=content,
-            finish_reason=finish_reason,
-            tool_calls=tool_calls if isinstance(tool_calls, list) else None,
-        )
-
 class DummyProvider(BaseProvider):
     async def chat(
         self,
@@ -751,13 +686,21 @@ class DummyProvider(BaseProvider):
             finish_reason="stop",
         )
 
+
 class ProviderRegistry:
-    _PROVIDER_FACTORIES: dict[str, type[BaseProvider]] = {
+    _PROVIDER_FACTORIES: dict[str, type[BaseProvider] | None] = {
         "openai": OpenAICompatProvider,
         "anthropic": AnthropicProvider,
-        "ollama": OllamaProvider,
+        "ollama": None,
         "dummy": DummyProvider,
     }
+
+    @classmethod
+    def _load_ollama(cls) -> type[BaseProvider]:
+        from src.orch.providers.ollama import OllamaProvider  # noqa: WPS433
+
+        cls._PROVIDER_FACTORIES["ollama"] = OllamaProvider
+        return OllamaProvider
 
     def __init__(self, providers: Dict[str, ProviderDef]):
         self.providers = {}
@@ -771,6 +714,8 @@ class ProviderRegistry:
                 )
 
             factory = self._PROVIDER_FACTORIES.get(provider_type)
+            if factory is None and provider_type == "ollama":
+                factory = self._load_ollama()
             if factory is None:
                 display_type: str
                 if isinstance(provider_type_raw, str):
