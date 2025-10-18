@@ -219,7 +219,9 @@ jobs:
       - name: Playwright E2E (if exists)
         run: |
           set -Eeuo pipefail
-          if [ -f package.json ] && node -e "p=require('./package.json');process.exit(!(p.scripts&&p.scripts['test:e2e']))"; then
+          if [ ! -f package.json ]; then
+            echo "{\"name\":\"e2e\",\"status\":\"skip\",\"duration_ms\":0}" >> workflow-cookbook/logs/test.jsonl
+          elif node -e "p=require('./package.json');process.exit(!(p.scripts&&p.scripts['test:e2e']))"; then
             echo "{\"name\":\"e2e\",\"status\":\"skip\",\"duration_ms\":0}" >> workflow-cookbook/logs/test.jsonl
           else
             start=$(date +%s%3N)
