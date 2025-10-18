@@ -10,7 +10,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.orch.providers import OpenAICompatProvider  # noqa: E402
+from src.orch.providers import (
+    OpenAICompatProvider,
+    ProviderStreamChunk,
+)  # noqa: E402
 from src.orch.router import ProviderDef  # noqa: E402
 from src.orch.types import ProviderChatResponse, chat_response_from_provider  # noqa: E402
 
@@ -64,6 +67,41 @@ def make_provider(base_url: str, defn_model: str = "gpt-4o") -> OpenAICompatProv
         concurrency=1,
     )
     return OpenAICompatProvider(provider_def)
+
+
+class _FakeStreamResponse:
+    def __init__(
+        self,
+        status_code: int,
+        lines: list[str],
+        *,
+        body: bytes = b"",
+    ) -> None:
+        self.status_code = status_code
+        self._lines = lines
+        self._body = body
+        self.request = httpx.Request(
+            "POST", "https://api.openai.com/v1/chat/completions"
+        )
+
+    async def __aenter__(self) -> "_FakeStreamResponse":
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    def raise_for_status(self) -> None:
+        if 400 <= self.status_code:
+            raise httpx.HTTPStatusError(
+                "error", request=self.request, response=self
+            )
+
+    async def aiter_lines(self):
+        for line in self._lines:
+            yield line
+
+    async def aread(self) -> bytes:
+        return self._body
 
 
 def test_no_authorization_header_when_auth_env_unset(
@@ -152,6 +190,66 @@ def test_openai_chat_response_preserves_finish_reason_and_tool_calls(
     assert payload["choices"][0]["finish_reason"] == "tool_calls"
     assert payload["choices"][0]["message"]["tool_calls"] == tool_calls
     assert "content" not in payload["choices"][0]["message"]
+
+
+def test_openai_stream_chat_yields_chunks(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "secret")
+    provider = make_provider("https://api.openai.com")
+    lines = [
+        "data: {\"id\":\"chunk-1\",\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}",
+        "data: [DONE]",
+    ]
+
+    def fake_stream(self: httpx.AsyncClient, method: str, url: str, **kwargs: Any):
+        return _FakeStreamResponse(200, lines)
+
+    monkeypatch.setattr(httpx.AsyncClient, "stream", fake_stream)
+
+    captured: list[ProviderStreamChunk] = []
+
+    async def invoke() -> None:
+        async for chunk in provider.stream_chat(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": "ping"}],
+        ):
+            captured.append(chunk)
+
+    asyncio.run(invoke())
+
+    assert [chunk.event for chunk in captured] == [
+        "chat.completion.chunk",
+        "done",
+    ]
+    assert captured[0].data["choices"][0]["delta"]["content"] == "hi"
+
+
+def test_openai_stream_chat_emits_error_on_429(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "secret")
+    provider = make_provider("https://api.openai.com")
+    body = b"{\"error\":{\"message\":\"limit\"}}"
+
+    def fake_stream(self: httpx.AsyncClient, method: str, url: str, **kwargs: Any):
+        return _FakeStreamResponse(429, [], body=body)
+
+    monkeypatch.setattr(httpx.AsyncClient, "stream", fake_stream)
+
+    captured: list[ProviderStreamChunk] = []
+
+    async def invoke() -> None:
+        async for chunk in provider.stream_chat(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": "ping"}],
+        ):
+            captured.append(chunk)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        asyncio.run(invoke())
+
+    assert captured
+    assert captured[0].event == "error"
+    assert captured[0].data["status_code"] == 429
 
 
 def test_openai_chat_response_preserves_function_call(
