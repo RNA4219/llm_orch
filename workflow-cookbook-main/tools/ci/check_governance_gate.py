@@ -35,6 +35,18 @@ def load_forbidden_patterns(policy_path: Path) -> List[str]:
 
         if in_forbidden_paths and stripped_line.startswith("- "):
             value = stripped_line[2:].strip()
+            comment_stripped: list[str] = []
+            in_single_quote = False
+            in_double_quote = False
+            for character in value:
+                if character == "'" and not in_double_quote:
+                    in_single_quote = not in_single_quote
+                elif character == '"' and not in_single_quote:
+                    in_double_quote = not in_double_quote
+                elif character == "#" and not in_single_quote and not in_double_quote:
+                    break
+                comment_stripped.append(character)
+            value = "".join(comment_stripped).strip()
             if len(value) >= 2 and value[0] in {'"', "'"} and value[-1] == value[0]:
                 value = value[1:-1]
             if value:
