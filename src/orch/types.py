@@ -1,4 +1,5 @@
-from typing import Any, Dict, List, Literal, Optional, Union
+from collections import defaultdict
+from typing import Any, Dict, Iterable, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -48,6 +49,26 @@ class ProviderChatChoice(BaseModel):
         raise KeyError(key)
 
 
+class ProviderStreamChoice(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    index: int = 0
+    delta: dict[str, Any] | str | None = None
+    role: Literal["system", "user", "assistant", "tool"] | None = None
+    content: str | list[dict[str, Any]] | None = None
+    tool_calls: list[dict[str, Any]] | None = None
+    function_call: dict[str, Any] | None = None
+    finish_reason: str | None = None
+    message: dict[str, Any] | None = None
+
+
+class ProviderStreamChunk(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    choices: list[ProviderStreamChoice] = Field(default_factory=list)
+    usage: dict[str, int] | None = None
+
+
 class ProviderChatResponse(BaseModel):
     status_code: int = 200
     model: str
@@ -58,6 +79,91 @@ class ProviderChatResponse(BaseModel):
     usage_prompt_tokens: Optional[int] = 0
     usage_completion_tokens: Optional[int] = 0
     choices: list[ProviderChatChoice] | None = None
+
+
+def provider_chat_response_from_stream(
+    model: str,
+    chunks: Iterable[ProviderStreamChunk],
+    *,
+    default_finish_reason: str = "stop",
+) -> ProviderChatResponse:
+    states: dict[int, dict[str, Any]] = defaultdict(lambda: {"message": {"role": "assistant"}, "segments": [], "finish": None})
+    prompt_tokens = completion_tokens = 0
+
+    def ingest(state: dict[str, Any], value: Any) -> None:
+        if value is None:
+            return
+        if isinstance(value, list):
+            state["segments"].append([item for item in value if item is not None])
+        else:
+            state["segments"].append(value)
+
+    def apply_mapping(state: dict[str, Any], payload: dict[str, Any]) -> None:
+        if (role := payload.get("role")) and isinstance(role, str):
+            state["message"]["role"] = role
+        if "content" in payload:
+            ingest(state, payload.get("content"))
+        if (tool_calls := payload.get("tool_calls")) and isinstance(tool_calls, list):
+            state["message"]["tool_calls"] = tool_calls
+        if (function_call := payload.get("function_call")) and isinstance(function_call, dict):
+            state["message"]["function_call"] = function_call
+        if (finish := payload.get("finish_reason")) and isinstance(finish, str):
+            state["finish"] = finish
+
+    for chunk in chunks:
+        usage = chunk.usage or {}
+        if (value := usage.get("prompt_tokens")) and isinstance(value, int):
+            prompt_tokens = max(prompt_tokens, value)
+        if (value := usage.get("completion_tokens")) and isinstance(value, int):
+            completion_tokens = max(completion_tokens, value)
+        for choice in chunk.choices:
+            state = states[choice.index]
+            if choice.role is not None:
+                state["message"]["role"] = choice.role
+            if isinstance(choice.message, dict):
+                apply_mapping(state, choice.message)
+            if isinstance(choice.delta, dict):
+                apply_mapping(state, choice.delta)
+            elif isinstance(choice.delta, str):
+                ingest(state, choice.delta)
+            ingest(state, choice.content)
+            if choice.tool_calls is not None:
+                state["message"]["tool_calls"] = choice.tool_calls
+            if choice.function_call is not None:
+                state["message"]["function_call"] = choice.function_call
+            if choice.finish_reason is not None:
+                state["finish"] = choice.finish_reason
+
+    _ = states[0]
+    provider_choices: list[ProviderChatChoice] = []
+    for index in sorted(states):
+        state = states[index]
+        message = dict(state["message"])
+        segments = state["segments"]
+        if segments:
+            if any(isinstance(segment, (dict, list)) for segment in segments):
+                flattened: list[Any] = []
+                for segment in segments:
+                    flattened.extend(segment if isinstance(segment, list) else [segment])
+                message["content"] = flattened
+            else:
+                message["content"] = "".join(str(segment) for segment in segments)
+        finish = state["finish"] or default_finish_reason
+        provider_choices.append(ProviderChatChoice(index=index, message=message, finish_reason=finish))
+
+    first_choice = provider_choices[0] if provider_choices else ProviderChatChoice(index=0)
+    first_message = first_choice.message if isinstance(first_choice.message, dict) else {}
+
+    return ProviderChatResponse(
+        model=model,
+        content=first_message.get("content"),
+        finish_reason=first_choice.finish_reason,
+        tool_calls=first_message.get("tool_calls"),
+        function_call=first_message.get("function_call"),
+        usage_prompt_tokens=prompt_tokens or 0,
+        usage_completion_tokens=completion_tokens or 0,
+        choices=provider_choices,
+    )
 
 
 def chat_response_from_provider(p: ProviderChatResponse) -> dict[str, Any]:
