@@ -1,5 +1,7 @@
 import asyncio
+import json
 import sys
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, AsyncIterator, cast
 
@@ -102,6 +104,99 @@ async def _collect_stream_chunks(
         chunks.append(chunk)
     return chunks
 
+
+def test_anthropic_chat_stream_uses_normalizer(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = build_anthropic_provider(monkeypatch)
+
+    events = [
+        {"type": "message_start", "message": {"role": "assistant"}},
+        {
+            "type": "message_delta",
+            "delta": {"usage": {"input_tokens": 7, "output_tokens": 11}},
+            "retry_after": 1.5,
+        },
+        {
+            "type": "error",
+            "error": {"type": "overloaded", "message": "slow down"},
+            "retry_after": 2,
+        },
+    ]
+
+    stream_lines = []
+    for event in events:
+        stream_lines.append(f"data: {json.dumps(event)}")
+        stream_lines.append("")
+
+    captured: dict[str, Any] = {}
+
+    class DummyStreamResponse:
+        def __init__(self) -> None:
+            self._lines = list(stream_lines)
+
+        async def __aenter__(self) -> "DummyStreamResponse":
+            return self
+
+        async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+            return None
+
+        def raise_for_status(self) -> None:
+            return None
+
+        async def aiter_lines(self) -> AsyncIterator[str]:
+            for line in self._lines:
+                yield line
+
+    class DummyAsyncClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> "DummyAsyncClient":
+            return self
+
+        async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+            return None
+
+        def stream(self, method: str, url: str, **kwargs: Any) -> DummyStreamResponse:
+            captured["method"] = method
+            captured["url"] = url
+            captured["headers"] = kwargs.get("headers")
+            captured["json"] = kwargs.get("json")
+            return DummyStreamResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", DummyAsyncClient)
+
+    recorded_events: list[dict[str, Any]] = []
+
+    async def fake_normalize(
+        self: AnthropicProvider, raw_events: AsyncIterator[dict[str, Any]]
+    ) -> AsyncIterator[ProviderStreamChunk]:
+        async for item in raw_events:
+            recorded_events.append(item)
+            yield ProviderStreamChunk(event_type=item.get("type"), raw=item)
+
+    monkeypatch.setattr(AnthropicProvider, "_normalize_stream_events", fake_normalize)
+
+    async def collect() -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
+        async for chunk in provider.chat_stream(
+            model="claude-3-sonnet", messages=[{"role": "user", "content": "ping"}]
+        ):
+            results.append(chunk)
+        return results
+
+    chunks = asyncio.run(collect())
+
+    assert captured["json"]["stream"] is True
+    assert recorded_events == events
+    assert [chunk["event"] for chunk in chunks] == ["message_start", "message_delta", "error"]
+    expected = []
+    for item in events:
+        payload = asdict(ProviderStreamChunk(event_type=item.get("type"), raw=item))
+        payload.pop("event_type", None)
+        expected.append(payload)
+    for chunk, expected_data in zip(chunks, expected):
+        assert chunk["data"] == expected_data
+    assert chunks[-1]["data"]["raw"]["retry_after"] == 2
 
 def test_anthropic_chat_normalizes_structured_messages(
     monkeypatch: pytest.MonkeyPatch,
