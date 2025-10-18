@@ -5,6 +5,9 @@ on:
     types: [completed]
   schedule:
     - cron: "0 3 * * *"   # 毎日3:00 UTC
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   reflect:
     runs-on: ubuntu-latest
