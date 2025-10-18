@@ -4,7 +4,6 @@ import json
 import os
 import subprocess
 import sys
-from fnmatch import fnmatch
 from pathlib import Path
 from typing import Iterable, List, Sequence
 
@@ -63,10 +62,23 @@ def find_forbidden_matches(paths: Iterable[str], patterns: Sequence[str]) -> Lis
     matches: List[str] = []
     for path in paths:
         normalized_path = path.lstrip("./")
+        path_object = Path(normalized_path)
         for pattern in patterns:
-            if fnmatch(normalized_path, pattern):
+            normalized_pattern = pattern.lstrip("/")
+            if path_object.match(normalized_pattern):
                 matches.append(normalized_path)
                 break
+            if normalized_pattern.endswith("/**"):
+                prefix = normalized_pattern[:-3]
+                if not prefix:
+                    matches.append(normalized_path)
+                    break
+                try:
+                    if path_object.is_relative_to(prefix):
+                        matches.append(normalized_path)
+                        break
+                except ValueError:
+                    continue
     return matches
 
 
