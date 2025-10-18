@@ -7,7 +7,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
@@ -1065,7 +1065,7 @@ def test_chat_rejects_stream_requests(
     assert record["error"] == server_module.STREAMING_UNSUPPORTED_ERROR
 
 
-def test_chat_stream_requests_skip_planner_and_record_metrics(
+def test_chat_stream_requests_plan_route_and_record_metrics(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     app = load_app("1")
@@ -1082,10 +1082,12 @@ def test_chat_stream_requests_skip_planner_and_record_metrics(
 
     monkeypatch.setitem(server_module.providers.providers, "dummy", MockProvider())
 
-    def fail_plan(*_: object, **__: object) -> None:
-        pytest.fail("planner.plan must not be invoked for streaming requests")
+    class _Route:
+        primary = "dummy"
+        fallback: list[str] = []
 
-    monkeypatch.setattr(server_module.planner, "plan", fail_plan)
+    planner_plan = Mock(return_value=_Route())
+    monkeypatch.setattr(server_module.planner, "plan", planner_plan)
 
     client = TestClient(app)
     response = client.post(
@@ -1101,6 +1103,7 @@ def test_chat_stream_requests_skip_planner_and_record_metrics(
     error_reason = server_module.STREAMING_UNSUPPORTED_ERROR
     assert response.json()["error"]["message"] == error_reason
     provider_chat.assert_not_awaited()
+    planner_plan.assert_called_once()
     assert_single_req_id(records)
     assert records[-1]["ok"] is False
     assert records[-1]["status"] == 400

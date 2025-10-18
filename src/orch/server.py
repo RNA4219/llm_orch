@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from .metrics import MetricsLogger
 from .providers import ProviderRegistry, UnsupportedContentBlockError
 from .rate_limiter import ProviderGuards
-from .router import RoutePlanner, load_config
+from .router import RouteDef, RoutePlanner, load_config
 from .types import ChatRequest, ProviderChatResponse, chat_response_from_provider
 
 app = FastAPI(title="llm-orch")
@@ -317,16 +317,6 @@ async def chat_completions(req: Request, body: ChatRequest):
 
     estimated_prompt_tokens = _estimate_prompt_tokens(normalized_messages, max_tokens)
 
-    if body.stream:
-        return await _stream_chat_response(
-            model=body.model,
-            provider_name=body.model,
-            task=task,
-            req_id=req_id,
-            start=start,
-            normalized_messages=normalized_messages,
-            provider_kwargs=provider_kwargs,
-        )
     try:
         route = planner.plan(task)
     except ValueError as exc:
@@ -346,6 +336,16 @@ async def chat_completions(req: Request, body: ChatRequest):
             "retries": 0,
         })
         raise HTTPException(status_code=400, detail=detail)
+    if body.stream:
+        return await _stream_chat_response(
+            model=body.model,
+            route=route,
+            task=task,
+            req_id=req_id,
+            start=start,
+            normalized_messages=normalized_messages,
+            provider_kwargs=provider_kwargs,
+        )
     last_err: str | None = None
     usage_prompt = 0
     usage_completion = 0
@@ -498,49 +498,18 @@ async def chat_completions(req: Request, body: ChatRequest):
 async def _stream_chat_response(
     *,
     model: str,
-    provider_name: str,
+    route: RouteDef,
     task: str,
     req_id: str,
     start: float,
     normalized_messages: list[dict[str, Any]],
     provider_kwargs: dict[str, Any],
 ) -> JSONResponse | StreamingResponse:
-    provider = providers.get(provider_name)
-    async def _write_metrics(
-        *,
-        ok: bool,
-        status: int,
-        latency_ms: int,
-        error: str | None = None,
-        provider_label: str | None = None,
-    ) -> None:
-        record = {
-            "req_id": req_id,
-            "ts": time.time(),
-            "task": task,
-            "provider": provider_label or provider_name,
-            "model": provider.model or model,
-            "latency_ms": latency_ms,
-            "ok": ok,
-            "status": status,
-            "retries": 0,
-            "usage_prompt": 0,
-            "usage_completion": 0,
-        }
-        if error is not None:
-            record["error"] = error
-        await _log_metrics(record)
-    if not hasattr(provider, "chat_stream"):
-        await _write_metrics(
-            ok=False,
-            status=400,
-            latency_ms=int((time.perf_counter() - start) * 1000),
-            error=STREAMING_UNSUPPORTED_ERROR,
-            provider_label="unsupported",
+    providers_to_try = [route.primary] + route.fallback
+    if not providers_to_try:
+        return JSONResponse(
+            {"error": {"message": "routing unavailable"}}, status_code=400
         )
-        return JSONResponse({"error": {"message": STREAMING_UNSUPPORTED_ERROR}}, status_code=400)
-    guard = guards.get(provider_name)
-    queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
 
     def _encode_event(raw_event: Any) -> bytes:
         if isinstance(raw_event, dict):
@@ -563,97 +532,272 @@ async def _stream_chat_response(
         lines.append(f"data: {data_text}")
         return ("\n".join(lines) + "\n\n").encode("utf-8")
 
-    async def _emit_error(status_code: int, message: str, retry_after: int | None) -> None:
-        await _write_metrics(
-            ok=False,
-            status=status_code,
-            latency_ms=int((time.perf_counter() - start) * 1000),
-            error=message,
-        )
-        await queue.put(
-            ("error", {"status": status_code, "message": message, "retry_after": retry_after})
-        )
+    attempts = 0
+    last_error: str | None = None
+    last_status: int | None = None
+    last_error_type: str | None = None
+    last_retry_after: int | None = None
+    last_provider = providers_to_try[0]
+    last_model = model
 
-    async def producer() -> None:
-        try:
-            async with guard:
-                stream_iter = provider.chat_stream(
-                    model,
-                    normalized_messages,
-                    **provider_kwargs,
-                )
-                try:
-                    first_event = await anext(stream_iter, None)
-                except httpx.HTTPStatusError as exc:
-                    status, message = _http_status_error_details(exc)
-                    status_code = status or BAD_GATEWAY_STATUS
-                    retry_after = _retry_after_seconds(exc.response)
-                    if retry_after is None and (
-                        status_code == 429 or status_code >= 500
-                    ):
-                        retry_after = DEFAULT_RETRY_AFTER_SECONDS
-                    await _emit_error(status_code, message, retry_after)
-                    return
-                except Exception as exc:
-                    await _emit_error(BAD_GATEWAY_STATUS, str(exc) or "provider error", None)
-                    return
-                if first_event is not None:
-                    await queue.put(("data", _encode_event(first_event)))
-                async for raw_event in stream_iter:
-                    await queue.put(("data", _encode_event(raw_event)))
-                await _write_metrics(
-                    ok=True,
-                    status=200,
-                    latency_ms=int((time.perf_counter() - start) * 1000),
-                )
-                await queue.put(("done", None))
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            await _emit_error(BAD_GATEWAY_STATUS, str(exc) or "provider error", None)
+    for provider_name in providers_to_try:
+        attempts += 1
+        provider = providers.get(provider_name)
+        provider_model = provider.model or model
+        if not hasattr(provider, "chat_stream"):
+            record = {
+                "req_id": req_id,
+                "ts": time.time(),
+                "task": task,
+                "provider": "unsupported",
+                "model": provider_model,
+                "latency_ms": int((time.perf_counter() - start) * 1000),
+                "ok": False,
+                "status": 400,
+                "error": STREAMING_UNSUPPORTED_ERROR,
+                "retries": attempts - 1,
+                "usage_prompt": 0,
+                "usage_completion": 0,
+            }
+            await _log_metrics(record)
+            return JSONResponse(
+                {"error": {"message": STREAMING_UNSUPPORTED_ERROR}}, status_code=400
+            )
+        guard = guards.get(provider_name)
+        queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
 
-    producer_task = asyncio.create_task(producer())
-    first_kind, first_payload = await queue.get()
-    if first_kind == "error":
-        await producer_task
-        status_code = int(first_payload["status"])
-        message = str(first_payload["message"]) if first_payload["message"] is not None else ""
-        retry_after = first_payload["retry_after"]
-        error_payload: dict[str, Any] = {
-            "message": message,
-            "type": _error_type_from_status(status_code),
-        }
-        if retry_after is not None:
-            error_payload["retry_after"] = retry_after
-        return JSONResponse({"error": error_payload}, status_code=status_code)
-    if first_kind not in {"data", "done"}:
-        await producer_task
-        raise RuntimeError("unexpected stream signal")
-    first_chunk: bytes | None = None
-    if first_kind == "data":
-        first_chunk = first_payload
+        async def _write_metrics(
+            *,
+            ok: bool,
+            status: int,
+            latency_ms: int,
+            retries: int,
+            error: str | None = None,
+            retry_after: int | None = None,
+        ) -> None:
+            record = {
+                "req_id": req_id,
+                "ts": time.time(),
+                "task": task,
+                "provider": provider_name,
+                "model": provider_model,
+                "latency_ms": latency_ms,
+                "ok": ok,
+                "status": status,
+                "retries": retries,
+                "usage_prompt": 0,
+                "usage_completion": 0,
+            }
+            if error is not None:
+                record["error"] = error
+            if retry_after is not None:
+                record["retry_after"] = retry_after
+            await _log_metrics(record)
 
-    async def event_source() -> Any:
-        try:
-            if first_chunk is not None:
-                yield first_chunk
-            if first_kind == "done":
-                yield b"data: [DONE]\n\n"
-                return
-            while True:
-                kind, payload = await queue.get()
-                if kind == "data":
-                    yield payload
-                elif kind == "done":
-                    yield b"data: [DONE]\n\n"
-                    break
-        finally:
-            if not producer_task.done():
-                producer_task.cancel()
+        async def producer() -> None:
             try:
-                await producer_task
+                async with guard:
+                    stream_iter = provider.chat_stream(
+                        model,
+                        normalized_messages,
+                        **provider_kwargs,
+                    )
+                    try:
+                        first_event = await anext(stream_iter, None)
+                    except UnsupportedContentBlockError as exc:
+                        planner.record_failure(provider_name)
+                        await queue.put(
+                            (
+                                "error",
+                                {
+                                    "status": 400,
+                                    "message": str(exc) or "unsupported content block",
+                                    "type": "provider_error",
+                                    "retry_after": None,
+                                },
+                            )
+                        )
+                        return
+                    except httpx.HTTPStatusError as exc:
+                        planner.record_failure(provider_name)
+                        status, message = _http_status_error_details(exc)
+                        status_code = status or BAD_GATEWAY_STATUS
+                        retry_after = _retry_after_seconds(exc.response)
+                        error_type = _error_type_from_status(status_code)
+                        if status_code == 429 or (400 <= status_code < 500):
+                            if retry_after is None and status_code == 429:
+                                retry_after = DEFAULT_RETRY_AFTER_SECONDS
+                            await queue.put(
+                                (
+                                    "error",
+                                    {
+                                        "status": status_code,
+                                        "message": message,
+                                        "type": error_type,
+                                        "retry_after": retry_after,
+                                    },
+                                )
+                            )
+                            return
+                        if retry_after is None and status_code >= 500:
+                            retry_after = DEFAULT_RETRY_AFTER_SECONDS
+                        await queue.put(
+                            (
+                                "fallback",
+                                {
+                                    "status": status_code,
+                                    "message": message,
+                                    "type": error_type,
+                                    "retry_after": retry_after,
+                                },
+                            )
+                        )
+                        return
+                    except Exception as exc:
+                        planner.record_failure(provider_name)
+                        await queue.put(
+                            (
+                                "fallback",
+                                {
+                                    "status": BAD_GATEWAY_STATUS,
+                                    "message": str(exc) or "provider error",
+                                    "type": "provider_server_error",
+                                    "retry_after": DEFAULT_RETRY_AFTER_SECONDS,
+                                },
+                            )
+                        )
+                        return
+                    if first_event is not None:
+                        await queue.put(("data", _encode_event(first_event)))
+                    async for raw_event in stream_iter:
+                        await queue.put(("data", _encode_event(raw_event)))
+                    planner.record_success(provider_name)
+                    await _write_metrics(
+                        ok=True,
+                        status=200,
+                        latency_ms=int((time.perf_counter() - start) * 1000),
+                        retries=attempts - 1,
+                    )
+                    await queue.put(("done", None))
             except asyncio.CancelledError:
-                pass
-            except Exception:
-                pass
-    return StreamingResponse(event_source(), media_type="text/event-stream")
+                raise
+            except UnsupportedContentBlockError as exc:
+                planner.record_failure(provider_name)
+                await queue.put(
+                    (
+                        "error",
+                        {
+                            "status": 400,
+                            "message": str(exc) or "unsupported content block",
+                            "type": "provider_error",
+                            "retry_after": None,
+                        },
+                    )
+                )
+            except Exception as exc:
+                planner.record_failure(provider_name)
+                await queue.put(
+                    (
+                        "fallback",
+                        {
+                            "status": BAD_GATEWAY_STATUS,
+                            "message": str(exc) or "provider error",
+                            "type": "provider_server_error",
+                            "retry_after": DEFAULT_RETRY_AFTER_SECONDS,
+                        },
+                    )
+                )
+
+        producer_task = asyncio.create_task(producer())
+        first_kind, first_payload = await queue.get()
+        if first_kind == "error":
+            await producer_task
+            status_code = int(first_payload["status"])
+            message = str(first_payload["message"]) if first_payload["message"] else ""
+            retry_after = first_payload.get("retry_after")
+            await _write_metrics(
+                ok=False,
+                status=status_code,
+                latency_ms=int((time.perf_counter() - start) * 1000),
+                retries=attempts - 1,
+                error=message,
+                retry_after=retry_after,
+            )
+            error_payload: dict[str, Any] = {
+                "message": message,
+                "type": str(first_payload.get("type") or _error_type_from_status(status_code)),
+            }
+            if retry_after is not None:
+                error_payload["retry_after"] = retry_after
+            return JSONResponse({"error": error_payload}, status_code=status_code)
+        if first_kind == "fallback":
+            await producer_task
+            last_provider = provider_name
+            last_model = provider_model
+            last_status = int(first_payload["status"])
+            last_error = str(first_payload.get("message") or "provider error")
+            last_error_type = str(first_payload.get("type") or _error_type_from_status(last_status))
+            last_retry_after = first_payload.get("retry_after")
+            if last_retry_after is None and last_status >= 500:
+                last_retry_after = DEFAULT_RETRY_AFTER_SECONDS
+            continue
+        if first_kind not in {"data", "done"}:
+            await producer_task
+            raise RuntimeError("unexpected stream signal")
+        first_chunk: bytes | None = None
+        if first_kind == "data":
+            first_chunk = first_payload
+
+        async def event_source() -> Any:
+            try:
+                if first_chunk is not None:
+                    yield first_chunk
+                if first_kind == "done":
+                    yield b"data: [DONE]\n\n"
+                    return
+                while True:
+                    kind, payload = await queue.get()
+                    if kind == "data":
+                        yield payload
+                    elif kind == "done":
+                        yield b"data: [DONE]\n\n"
+                        break
+            finally:
+                if not producer_task.done():
+                    producer_task.cancel()
+                try:
+                    await producer_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    pass
+
+        return StreamingResponse(event_source(), media_type="text/event-stream")
+
+    latency_ms = int((time.perf_counter() - start) * 1000)
+    failure_status = last_status or BAD_GATEWAY_STATUS
+    failure_error = last_error or "all providers failed"
+    failure_error_type = last_error_type or _error_type_from_status(failure_status)
+    if last_retry_after is None and (failure_status == 429 or failure_status >= 500):
+        last_retry_after = DEFAULT_RETRY_AFTER_SECONDS
+    failure_record: dict[str, Any] = {
+        "req_id": req_id,
+        "ts": time.time(),
+        "task": task,
+        "provider": last_provider,
+        "model": last_model,
+        "latency_ms": latency_ms,
+        "ok": False,
+        "status": failure_status,
+        "error": failure_error,
+        "retries": max(attempts - 1, 0),
+        "usage_prompt": 0,
+        "usage_completion": 0,
+    }
+    if last_retry_after is not None:
+        failure_record["retry_after"] = last_retry_after
+    await _log_metrics(failure_record)
+    error_payload = {"message": failure_error, "type": failure_error_type}
+    if last_retry_after is not None:
+        error_payload["retry_after"] = last_retry_after
+    return JSONResponse({"error": error_payload}, status_code=failure_status)
