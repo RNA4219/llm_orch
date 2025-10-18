@@ -85,3 +85,10 @@ def test_ollama_response_format_json_sets_format(monkeypatch: pytest.MonkeyPatch
     assert post_calls
     payload = post_calls[0]["json"]
     assert payload.get("format") == "json"
+
+
+def test_ollama_module_re_export() -> None:
+    from src.orch.providers import OllamaProvider as exported_provider  # noqa: WPS347
+    from src.orch.providers import ollama as module
+
+    assert module.OllamaProvider is exported_provider
