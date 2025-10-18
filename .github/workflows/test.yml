@@ -40,7 +40,9 @@ jobs:
           fi
       - uses: actions/upload-artifact@v4
         if: always()
-        with: { name: test-logs, path: workflow-cookbook/logs/* }
+        with:
+          name: test-logs-${{ github.job }}
+          path: workflow-cookbook/logs/*
 
   typecheck:
     runs-on: ubuntu-24.04
@@ -70,7 +72,9 @@ jobs:
           fi
       - uses: actions/upload-artifact@v4
         if: always()
-        with: { name: test-logs, path: workflow-cookbook/logs/* }
+        with:
+          name: test-logs-${{ github.job }}
+          path: workflow-cookbook/logs/*
 
   unit:
     runs-on: ubuntu-24.04
@@ -157,7 +161,9 @@ jobs:
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
-        with: { name: test-logs, path: workflow-cookbook/logs/* }
+        with:
+          name: test-logs-${{ github.job }}
+          path: workflow-cookbook/logs/*
 
   build:
     needs: [lint, typecheck, unit]
@@ -194,7 +200,9 @@ jobs:
           if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         if: always()
-        with: { name: test-logs, path: workflow-cookbook/logs/* }
+        with:
+          name: test-logs-${{ github.job }}
+          path: workflow-cookbook/logs/*
 
   e2e:
     needs: [build]
@@ -218,23 +226,31 @@ jobs:
           fi
       - uses: actions/upload-artifact@v4
         if: always()
-        with: { name: test-logs, path: workflow-cookbook/logs/* }
+        with:
+          name: test-logs-${{ github.job }}
+          path: workflow-cookbook/logs/*
 
   report:
     needs: [lint, typecheck, unit, build, e2e]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v4
-        with: { name: test-logs, path: . }
+        with:
+          pattern: test-logs-*
+          path: workflow-cookbook/artifacts
       - name: Summarize & STRICT gate (optional)
         run: |
           set -Eeuo pipefail
-          # 可能性のあるファイル名に対応
-          src=""
-          [ -f test.jsonl ] && src="test.jsonl"
-          [ -z "$src" ] && [ -f logs/test.jsonl ] && src="logs/test.jsonl"
-          if [ -z "$src" ]; then src=$(ls -1 **/test.jsonl | head -n1 || true); fi
-          if [ -z "$src" ]; then echo "No JSONL found"; exit 0; fi
+          tmp=$(mktemp)
+          found=0
+          while IFS= read -r -d '' file; do
+            cat "$file" >> "$tmp"
+            found=1
+          done < <(find workflow-cookbook/artifacts -type f \( -name 'test.jsonl' -o -name 'test-*.jsonl' \) -print0)
+
+          if [ "$found" -eq 0 ]; then echo "No JSONL found"; exit 0; fi
+
+          src="$tmp"
 
           echo "=== CI Summary (raw JSONL) ==="
           cat "$src" || true
