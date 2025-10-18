@@ -15,7 +15,7 @@ from src.orch.providers import OpenAICompatProvider  # noqa: E402
 from src.orch.router import ProviderDef  # noqa: E402
 from src.orch.types import (
     ProviderChatResponse,
-    ProviderStreamChunk,
+    ProviderStreamChunk as ProviderStreamChunkModel,
     chat_response_from_provider,
     provider_chat_response_from_stream,
 )  # noqa: E402
@@ -201,9 +201,9 @@ def test_openai_chat_response_preserves_function_call(
 
 def test_provider_chat_response_from_stream_merges_chunks() -> None:
     chunks = [
-        ProviderStreamChunk.model_validate({"choices": [{"index": 0, "delta": {"role": "assistant", "content": "Hel"}}]}),
-        ProviderStreamChunk.model_validate({"choices": [{"index": 0, "delta": {"content": "lo"}}]}),
-        ProviderStreamChunk.model_validate(
+        ProviderStreamChunkModel.model_validate({"choices": [{"index": 0, "delta": {"role": "assistant", "content": "Hel"}}]}),
+        ProviderStreamChunkModel.model_validate({"choices": [{"index": 0, "delta": {"content": "lo"}}]}),
+        ProviderStreamChunkModel.model_validate(
             {
                 "choices": [
                     {"index": 0, "delta": {"content": " world"}, "finish_reason": "stop"}
