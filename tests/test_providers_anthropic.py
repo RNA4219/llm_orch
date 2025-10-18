@@ -11,6 +11,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.orch.providers import AnthropicProvider, BaseProvider
+from src.orch.providers.anthropic import AnthropicProvider as ModuleAnthropicProvider
 from src.orch.router import ProviderDef
 from src.orch.types import ProviderChatResponse, chat_response_from_provider
 
@@ -862,3 +863,7 @@ def test_anthropic_tool_use_only_message_omits_content(
     message = openai_response["choices"][0]["message"]
     assert "content" not in message
     assert message.get("content") is None
+
+
+def test_anthropic_provider_reexport() -> None:
+    assert AnthropicProvider is ModuleAnthropicProvider
