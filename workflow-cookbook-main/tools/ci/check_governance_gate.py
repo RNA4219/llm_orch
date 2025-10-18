@@ -4,7 +4,7 @@ import json
 import os
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Iterable, List, Sequence
 
 
@@ -59,23 +59,30 @@ def get_changed_paths(refspec: str) -> List[str]:
 
 
 def _normalize_forbidden_value(value: str) -> str:
-    value = value.lstrip("/")
-    while value.startswith("./") or value.startswith("../"):
-        if value.startswith("./"):
-            value = value[2:]
+    trimmed = value.lstrip("/")
+    while trimmed.startswith("./") or trimmed.startswith("../"):
+        if trimmed.startswith("./"):
+            trimmed = trimmed[2:]
         else:
-            value = value[3:]
-        value = value.lstrip("/")
-    return value
+            trimmed = trimmed[3:]
+        trimmed = trimmed.lstrip("/")
+    if not trimmed:
+        return ""
+    return PurePosixPath(trimmed).as_posix()
 
 
 def find_forbidden_matches(paths: Iterable[str], patterns: Sequence[str]) -> List[str]:
     matches: List[str] = []
     for path in paths:
         normalized_path = _normalize_forbidden_value(path)
-        path_object = Path(normalized_path)
+        path_object = PurePosixPath(normalized_path)
         for pattern in patterns:
             normalized_pattern = _normalize_forbidden_value(pattern)
+            if not normalized_pattern:
+                if not normalized_path:
+                    matches.append(normalized_path)
+                    break
+                continue
             if path_object.match(normalized_pattern):
                 matches.append(normalized_path)
                 break
