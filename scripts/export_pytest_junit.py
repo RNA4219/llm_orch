@@ -76,23 +76,23 @@ def _build_record(testcase: ET.Element) -> dict[str, object]:
     if duration_ms is not None:
         record["duration_ms"] = duration_ms
 
-    for tag, status in _STATUS_TAGS.items():
-        element = next(
-            (child for child in testcase if _strip_namespace(child.tag) == tag),
-            None,
-        )
-        if element is not None:
-            record["status"] = status
-            message = element.attrib.get("message")
-            if message:
-                record["message"] = message
-            text = (element.text or "").strip()
-            if text:
-                record["details"] = text
-            error_type = element.attrib.get("type")
-            if error_type:
-                record["type"] = error_type
-            break
+    for child in testcase:
+        tag = _strip_namespace(child.tag)
+        status = _STATUS_TAGS.get(tag)
+        if status is None:
+            continue
+
+        record["status"] = status
+        message = child.attrib.get("message")
+        if message:
+            record["message"] = message
+        text = (child.text or "").strip()
+        if text:
+            record["details"] = text
+        error_type = child.attrib.get("type")
+        if error_type:
+            record["type"] = error_type
+        break
 
     return record
 
