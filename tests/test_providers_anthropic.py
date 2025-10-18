@@ -14,7 +14,12 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.orch.providers import AnthropicProvider, BaseProvider, ProviderStreamChunk
 from src.orch.router import ProviderDef
-from src.orch.types import ProviderChatResponse, chat_response_from_provider
+from src.orch.types import (
+    ProviderChatResponse,
+    ProviderStreamChunk as ProviderStreamChunkModel,
+    chat_response_from_provider,
+    provider_chat_response_from_stream,
+)
 
 
 def run_chat(
@@ -103,6 +108,31 @@ async def _collect_stream_chunks(
     async for chunk in provider._normalize_stream_events(event_stream()):
         chunks.append(chunk)
     return chunks
+
+
+def test_anthropic_stream_usage_normalization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = build_anthropic_provider(monkeypatch)
+
+    events = [
+        {
+            "type": "message_delta",
+            "delta": {"usage": {"input_tokens": 17, "output_tokens": 23}},
+        }
+    ]
+
+    chunks = asyncio.run(_collect_stream_chunks(provider, events))
+    usage_chunks = [chunk for chunk in chunks if chunk.event_type == "usage"]
+    assert usage_chunks, "usage chunk missing"
+
+    usage = usage_chunks[0].usage
+    assert usage == {"prompt_tokens": 17, "completion_tokens": 23}
+
+    typed_usage_chunk = ProviderStreamChunkModel.model_validate(asdict(usage_chunks[0]))
+    response = provider_chat_response_from_stream(provider.model, [typed_usage_chunk])
+    assert response.usage_prompt_tokens == 17
+    assert response.usage_completion_tokens == 23
 
 
 def test_anthropic_chat_stream_uses_normalizer(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1035,7 +1065,7 @@ def test_anthropic_stream_yields_usage_and_stop_reason(
         "usage",
         "message_stop",
     ]
-    assert chunks[1].usage == {"input_tokens": 3, "output_tokens": 7}
+    assert chunks[1].usage == {"prompt_tokens": 3, "completion_tokens": 7}
     assert chunks[-1].finish_reason == "tool_calls"
 
 

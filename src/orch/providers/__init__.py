@@ -483,12 +483,16 @@ class AnthropicProvider(BaseProvider):
                 usage_payload = delta_payload.get("usage")
                 if isinstance(usage_payload, dict):
                     usage: dict[str, int] = {}
-                    prompt_tokens = usage_payload.get("input_tokens")
-                    completion_tokens = usage_payload.get("output_tokens")
+                    prompt_tokens = usage_payload.get("prompt_tokens")
+                    if not isinstance(prompt_tokens, int):
+                        prompt_tokens = usage_payload.get("input_tokens")
+                    completion_tokens = usage_payload.get("completion_tokens")
+                    if not isinstance(completion_tokens, int):
+                        completion_tokens = usage_payload.get("output_tokens")
                     if isinstance(prompt_tokens, int):
-                        usage["input_tokens"] = prompt_tokens
+                        usage["prompt_tokens"] = prompt_tokens
                     if isinstance(completion_tokens, int):
-                        usage["output_tokens"] = completion_tokens
+                        usage["completion_tokens"] = completion_tokens
                     if usage:
                         yield ProviderStreamChunk(
                             event_type="usage",
