@@ -680,6 +680,14 @@ class OllamaProvider(BaseProvider):
             "stream": False,
             "options": {"temperature": temperature, "num_predict": max_tokens},
         }
+        if response_format is not None:
+            format_type = response_format.get("type")
+            if format_type == "json_object":
+                payload["format"] = "json"
+            else:
+                raise ValueError(
+                    "OllamaProvider only supports response_format type 'json_object'."
+                )
         cleaned_options = {
             key: value
             for key, value in extra_options.items()
