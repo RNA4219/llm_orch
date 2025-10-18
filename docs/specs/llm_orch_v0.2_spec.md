@@ -3,10 +3,11 @@
 ## 要約
 
 - OpenAI 互換の `/v1/chat/completions` を受け付ける薄いオーケストレーター。
-- ルーター設定に基づき OpenAI / Anthropic / Groq / Ollama などへ転送し、RPM・並列数を制御しながら、429 / 5xx 時はリトライ後にフォールバック。
-- 応答は OpenAI 形式で返却し、`/healthz` の疎通確認と JSONL 形式でのメトリクス出力を提供。
-- 現状の制限 (MVP)：SSE ストリーミング未対応 (`stream:false` のみ)、TPM (Tokens/min) 未実装。将来は `usage` を用いた TPM バケット化を計画。
-- リクエスト処理フロー (非ストリーミング)：`POST /v1/chat/completions` → ルーティング → レート / 並列制御 → プロバイダ呼び出しとフォールバック → OpenAI 形式応答 → JSONL メトリクス記録。
+- ルーター設定に基づき OpenAI / Anthropic / Groq / Ollama などへ転送し、RPM・並列数・TPM を `ProviderGuards` で制御しながらフォールバックを実施する（`src/orch/rate_limiter.py` の `SlidingWindowBucket`・`Guard`）。
+- `stream:true` の SSE は `_stream_chat_response` で FastAPI の `StreamingResponse` を用いて提供し、プロバイダ別ストリームを正規化しつつフェイルオーバ通知を送出する（`src/orch/server.py`）。
+- 応答は OpenAI 形式で返却し、`/healthz` と JSONL ログに加えて Prometheus `/metrics` で主要指標を公開する（`src/orch/server.py` の `_render_prometheus`）。
+- リクエスト処理フロー：`POST /v1/chat/completions` → ルーティング (`RoutePlanner`) → レート / 並列 / TPM 制御 → プロバイダ呼び出しとフォールバック → OpenAI 形式応答 / SSE ストリーム → JSONL メトリクス・Prometheus 反映。
+- 現状の制限 (MVP)：OpenTelemetry 連携は未着手。設定ファイルのホットリロードは未対応。TPM ガードは推定トークンに依存し、`usage` が欠落するプロバイダでは保守的なスロットリングが発生する。
 
 ## 次段階仕様書 (v0.2 Next Stage)
 
@@ -17,11 +18,19 @@
 - **セキュリティ / 運用**: API キー管理、CORS、設定ホットリロード、スキーマ検証。
 - **受け入れ基準とマイルストーン**: M1 (Streaming)、M2 (TPM) などの段階的ゴール設定。
 
-## 差分 TODO (提案)
+## 差分 TODO (棚卸し)
 
-- [ ] SSE 実装の土台: FastAPI / Starlette の `EventSourceResponse` もしくは `text/event-stream` での逐次送出。
-- [ ] プロバイダ別ストリーム変換アダプタ: OpenAI / Anthropic / Groq / Ollama の差異を "delta" に正規化。
-- [ ] TPM バケット: `usage.prompt_tokens` / `usage.completion_tokens` を集計し、欠落時はトークナイザ推定で補完。60 秒スライド窓で遮断。
-- [ ] Prometheus エクスポート: RPS / Latency / Errors / Retry / Rate 状態の 4 系列を計測。
-- [ ] `router.yaml` 拡張: `strategy: weighted|priority|sticky`、重み・sticky TTL・CB 閾値を指定。
-- [ ] エラー正規化: 429 / 5xx の OpenAI 互換エラー形式と `retry_after` の提供。
+### 完了済み
+
+- [x] SSE 実装の土台とフェイルオーバ通知（`src/orch/server.py` の `_stream_chat_response`）。
+- [x] プロバイダ別ストリーム正規化（`_encode_event` と `provider.chat_stream` のイベントハンドリング）。
+- [x] TPM バケット制御（`src/orch/rate_limiter.py` の `SlidingWindowBucket` と `Guard.record_usage`）。
+- [x] Prometheus エクスポート（`src/orch/server.py` の `_render_prometheus` / `/metrics`）。
+- [x] `router.yaml` の weighted / priority / sticky / circuit breaker 対応（`src/orch/router.py`）。
+- [x] エラー正規化と `retry_after` 伝搬（`src/orch/server.py` の `_error_type_from_status` 周辺ロジック）。
+
+### 未完了
+
+- [ ] OpenTelemetry など外部トレースシステムへの出力。
+- [ ] 設定ファイル (`providers.toml` / `router.yaml`) のホットリロードおよび再読み込み通知。
+- [ ] ダッシュボード整備（Grafana 等）と TPM の実測値表示。
