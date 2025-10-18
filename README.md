@@ -2,6 +2,16 @@
 
 OpenAI互換 `/v1/chat/completions` を受け付ける**薄いオーケストレーター**。**RPM/並列制御、429/5xx再試行、フォールバック、Ollama吸収、/healthz、JSONLメトリクス**に対応（MVP）。
 
+<!-- LLM-BOOTSTRAP v1 -->
+読む順番:
+1. docs/birdseye/index.json  …… ノード一覧・隣接関係（軽量）
+2. docs/birdseye/caps/<path>.json …… 必要ノードだけ point read（個別カプセル）
+
+フォーカス手順:
+- 直近変更ファイル±2hopのノードIDを index.json から取得
+- 対応する caps/*.json のみ読み込み
+<!-- /LLM-BOOTSTRAP -->
+
 > ⚠️ 初期版は **非ストリーミング**（`stream: false` のみ）。Anthropic/OpenAI/Groq/Ollamaの最小互換。
 
 ## Quick Start
