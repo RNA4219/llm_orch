@@ -545,11 +545,12 @@ async def _stream_chat_response(
         provider = providers.get(provider_name)
         provider_model = provider.model or model
         if not hasattr(provider, "chat_stream"):
-            record = {
+            planner.record_failure(provider_name)
+            failure_record = {
                 "req_id": req_id,
                 "ts": time.time(),
                 "task": task,
-                "provider": "unsupported",
+                "provider": provider_name,
                 "model": provider_model,
                 "latency_ms": int((time.perf_counter() - start) * 1000),
                 "ok": False,
@@ -559,10 +560,14 @@ async def _stream_chat_response(
                 "usage_prompt": 0,
                 "usage_completion": 0,
             }
-            await _log_metrics(record)
-            return JSONResponse(
-                {"error": {"message": STREAMING_UNSUPPORTED_ERROR}}, status_code=400
-            )
+            await _log_metrics(failure_record)
+            last_provider = "unsupported"
+            last_model = provider_model
+            last_status = 400
+            last_error = STREAMING_UNSUPPORTED_ERROR
+            last_error_type = "provider_error"
+            last_retry_after = None
+            continue
         guard = guards.get(provider_name)
         queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
 

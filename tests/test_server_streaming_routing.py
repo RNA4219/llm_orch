@@ -105,3 +105,59 @@ def test_streaming_fallback_uses_routing(monkeypatch: pytest.MonkeyPatch) -> Non
 
     assert planner_mock.plan.called
     assert "[DONE]" in content
+
+
+def test_streaming_skips_provider_without_chat_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+
+    route = RouteDef(
+        name="PLAN",
+        strategy="priority",
+        targets=[
+            RouteTarget(provider="frontier_primary"),
+            RouteTarget(provider="frontier_backup"),
+        ],
+    ).ordered(["frontier_primary", "frontier_backup"])
+
+    planner_mock = Mock()
+    planner_mock.plan.return_value = route
+    planner_mock.record_success = Mock()
+    planner_mock.record_failure = Mock()
+    monkeypatch.setattr(server_module, "planner", planner_mock, raising=False)
+
+    providers_mapping = {
+        "frontier_primary": type(
+            "PrimaryProvider",
+            (),
+            {"model": "primary"},
+        )(),
+        "frontier_backup": type(
+            "BackupProvider",
+            (),
+            {"model": "backup", "chat_stream": staticmethod(_successful_stream)},
+        )(),
+    }
+    guards_mapping = {
+        "frontier_primary": _DummyGuard(),
+        "frontier_backup": _DummyGuard(),
+    }
+    monkeypatch.setattr(server_module, "providers", _Registry(providers_mapping), raising=False)
+    monkeypatch.setattr(server_module, "guards", _Registry(guards_mapping), raising=False)
+
+    client = TestClient(app)
+    body = {
+        "model": "gpt-4.1-mini",
+        "messages": [{"role": "user", "content": "hi"}],
+        "stream": True,
+    }
+
+    with client.stream("POST", "/v1/chat/completions", json=body) as response:
+        content = "".join(response.iter_text())
+
+    assert planner_mock.plan.called
+    planner_mock.record_failure.assert_called_once_with("frontier_primary")
+    planner_mock.record_success.assert_called_once_with("frontier_backup")
+    assert "[DONE]" in content
