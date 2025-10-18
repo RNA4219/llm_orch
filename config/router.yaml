@@ -2,6 +2,7 @@ defaults:
   temperature: 0.2
   max_tokens: 2048
   task_header: "x-orch-task-kind"
+  sticky_header: "x-orch-sticky-key"
 routes:
   PLAN:
     strategy: priority

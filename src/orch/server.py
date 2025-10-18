@@ -317,8 +317,15 @@ async def chat_completions(req: Request, body: ChatRequest):
 
     estimated_prompt_tokens = _estimate_prompt_tokens(normalized_messages, max_tokens)
 
+    sticky_value: str | None = None
+    sticky_header_name = cfg.router.defaults.sticky_header
+    if sticky_header_name:
+        header_candidate = req.headers.get(sticky_header_name)
+        if header_candidate is not None:
+            sticky_value = header_candidate
+
     try:
-        route = planner.plan(task)
+        route = planner.plan(task, sticky_key=sticky_value)
     except ValueError as exc:
         detail = str(exc) or "routing unavailable"
         await _log_metrics({

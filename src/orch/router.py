@@ -29,6 +29,7 @@ class RouterDefaults:
     max_tokens: int
     task_header: str
     task_header_value: str | None = None
+    sticky_header: str | None = None
 
 @dataclass(frozen=True)
 class CircuitBreakerSettings:
@@ -158,6 +159,7 @@ class _DefaultsModel(BaseModel):
     max_tokens: int = Field(default=2048, ge=1)
     task_header: str = Field(default="x-orch-task-kind")
     task_header_value: str | None = None
+    sticky_header: str | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -239,6 +241,9 @@ def load_config(config_dir: str, use_dummy: bool=False) -> LoadedConfig:
             task_header=str(defs.task_header),
             task_header_value=str(defs.task_header_value)
             if defs.task_header_value is not None
+            else None,
+            sticky_header=str(defs.sticky_header)
+            if defs.sticky_header is not None
             else None,
         ),
         routes=routes_cfg,
