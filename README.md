@@ -12,7 +12,7 @@ OpenAI互換 `/v1/chat/completions` を受け付ける**薄いオーケストレ
 - 対応する caps/*.json のみ読み込み
 <!-- /LLM-BOOTSTRAP -->
 
-> ⚠️ 初期版は **非ストリーミング**（`stream: false` のみ）。Anthropic/OpenAI/Groq/Ollamaの最小互換。
+> ℹ️ SSE（Server-Sent Events）に対応済み。Anthropic/OpenAI/Groq/Ollamaの最小互換ストリーム/非ストリームを同一エンドポイントで扱えます。
 
 ## Quick Start
 
@@ -61,7 +61,11 @@ curl -s -H "Content-Type: application/json" \
 - リクエストで `{"stream": true}` を指定すると `text/event-stream` を返却します。
 - `data: {...}` 形式のOpenAI互換チャンクが連続し、終端は `data: [DONE]`。
 - チャンクのJSONには `choices[].delta` など通常のOpenAI互換フィールドが含まれます。
+- プライマリプロバイダが初回チャンク生成前に 5xx や接続例外を返した場合はルート定義のフォールバック先へ自動で切り替わり、すべて失敗した場合のみJSONエラーを返します。再試行不可な 4xx/429 は即座にJSONエラーとなり、429/5xx時は `retry_after` を付与します。
+- `ProviderGuards` によりRPM/並列/TPM制御がストリームでも適用され、フォールバックごとにスロットが解放・再取得されるため、TPMバケット残量が不足すると待機またはエラーになります。
 
 ## 既知の制限（MVP）
 
-- トークン制限（TPM）は未対応（RPMのみ）。今後 `usage` を元にTPMバケット化予定。
+- OpenTelemetry連携は未実装。
+- 設定ファイル（`providers.toml` / `router.yaml`）のホットリロードは未対応。
+- TPMガードは `usage` が欠落するプロバイダでは推定トークンを用いるため、保守的なスロットリングが発生します。
