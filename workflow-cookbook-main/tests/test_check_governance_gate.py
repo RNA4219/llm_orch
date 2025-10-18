@@ -22,6 +22,11 @@ from tools.ci.check_governance_gate import (
             ["/core/schema/**"],
             ["core/schema/nested/file.yaml"],
         ),
+        (
+            """docs/sub/file.md""".splitlines(),
+            ["./docs/**"],
+            ["docs/sub/file.md"],
+        ),
         ("""docs/readme.md\nops/runbook.md""".splitlines(), ["/core/schema/**"], []),
         (
             """auth/service.py\ncore/schema/definitions.yml""".splitlines(),
