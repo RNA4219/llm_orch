@@ -1,12 +1,18 @@
 import asyncio
+import json
 import os
 import time
 import uuid
+from collections import defaultdict
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, StreamingResponse
+
 
 from .metrics import MetricsLogger
 from .providers import ProviderRegistry, UnsupportedContentBlockError
@@ -37,12 +43,43 @@ def _env_var_as_bool(name: str, *, default: bool = False) -> bool:
 
 
 USE_DUMMY: bool = _env_var_as_bool("ORCH_USE_DUMMY")
+DEFAULT_RETRY_AFTER_SECONDS = int(os.environ.get("ORCH_RETRY_AFTER_SECONDS", "30"))
+
+
+def _parse_env_list(value: str) -> list[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+INBOUND_API_KEYS = frozenset(_parse_env_list(os.environ.get("ORCH_INBOUND_API_KEYS", "")))
+API_KEY_HEADER = os.environ.get("ORCH_API_KEY_HEADER", "x-api-key")
+ALLOWED_ORIGINS = _parse_env_list(os.environ.get("ORCH_CORS_ALLOW_ORIGINS", ""))
+PROM_CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
+HISTOGRAM_BUCKETS: tuple[float, ...] = (0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0)
+
+
+def _new_histogram_state() -> dict[str, Any]:
+    return {"buckets": [0] * (len(HISTOGRAM_BUCKETS) + 1), "count": 0, "sum": 0.0}
+
+
+PROM_COUNTER: defaultdict[tuple[str, str, str], int] = defaultdict(int)
+PROM_HISTOGRAM: defaultdict[tuple[str, str], dict[str, Any]] = defaultdict(
+    _new_histogram_state
+)
 
 cfg = load_config(CONFIG_DIR, use_dummy=USE_DUMMY)
 providers = ProviderRegistry(cfg.providers)
 guards = ProviderGuards(cfg.providers)
 planner = RoutePlanner(cfg.router, cfg.providers)
 metrics = MetricsLogger(os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "metrics"))
+
+if ALLOWED_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=ALLOWED_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 
 def _http_status_error_details(exc: httpx.HTTPStatusError) -> tuple[int | None, str]:
@@ -77,6 +114,100 @@ def _http_status_error_details(exc: httpx.HTTPStatusError) -> tuple[int | None, 
         message = str(exc)
     return status, message
 
+
+def _retry_after_seconds(response: httpx.Response | None) -> int | None:
+    if response is None:
+        return None
+    header = response.headers.get("Retry-After")
+    if not header:
+        return None
+    value = header.strip()
+    if not value:
+        return None
+    if value.isdigit():
+        return max(int(value), 0)
+    try:
+        parsed = parsedate_to_datetime(value)
+    except (TypeError, ValueError, IndexError):
+        return None
+    if parsed is None:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    delta = (parsed - datetime.now(timezone.utc)).total_seconds()
+    return max(int(delta), 0)
+
+
+def _error_type_from_status(status: int | None) -> str:
+    if status == 429:
+        return "rate_limit"
+    if status is not None and status >= 500:
+        return "provider_server_error"
+    return "provider_error"
+
+
+def _require_api_key(req: Request) -> None:
+    if not INBOUND_API_KEYS:
+        return
+    candidate = req.headers.get(API_KEY_HEADER)
+    if candidate is None:
+        auth_header = req.headers.get("authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            candidate = auth_header[7:]
+    if candidate and candidate in INBOUND_API_KEYS:
+        return
+    raise HTTPException(status_code=401, detail="missing or invalid api key")
+
+
+async def _log_metrics(record: dict[str, Any]) -> None:
+    await metrics.write(record)
+    provider = str(record.get("provider") or "unknown")
+    status = str(record.get("status") or "0")
+    ok_label = "true" if record.get("ok") else "false"
+    PROM_COUNTER[(provider, status, ok_label)] += 1
+    latency_seconds = max(float(record.get("latency_ms") or 0) / 1000.0, 0.0)
+    hist_entry = PROM_HISTOGRAM[(provider, ok_label)]
+    buckets = hist_entry["buckets"]
+    for idx, bound in enumerate(HISTOGRAM_BUCKETS):
+        if latency_seconds <= bound:
+            buckets[idx] += 1
+    buckets[-1] += 1
+    hist_entry["count"] += 1
+    hist_entry["sum"] += latency_seconds
+
+
+def _render_prometheus() -> bytes:
+    lines: list[str] = [
+        "# HELP orch_requests_total Total number of orchestrator requests",
+        "# TYPE orch_requests_total counter",
+    ]
+    for (provider, status, ok_label), value in sorted(PROM_COUNTER.items()):
+        lines.append(
+            f'orch_requests_total{{provider="{provider}",status="{status}",ok="{ok_label}"}} {value}'
+        )
+    lines.append(
+        "# HELP orch_request_latency_seconds Request latency for orchestrated requests"
+    )
+    lines.append("# TYPE orch_request_latency_seconds histogram")
+    for (provider, ok_label), state in sorted(PROM_HISTOGRAM.items()):
+        buckets = state["buckets"]
+        for idx, bound in enumerate(HISTOGRAM_BUCKETS):
+            le_value = format(bound, ".6g")
+            count = buckets[idx]
+            lines.append(
+                f'orch_request_latency_seconds_bucket{{provider="{provider}",ok="{ok_label}",le="{le_value}"}} {count}'
+            )
+        lines.append(
+            f'orch_request_latency_seconds_bucket{{provider="{provider}",ok="{ok_label}",le="+Inf"}} {buckets[-1]}'
+        )
+        lines.append(
+            f'orch_request_latency_seconds_count{{provider="{provider}",ok="{ok_label}"}} {state["count"]}'
+        )
+        lines.append(
+            f'orch_request_latency_seconds_sum{{provider="{provider}",ok="{ok_label}"}} {state["sum"]}'
+        )
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
 MAX_PROVIDER_ATTEMPTS = 3
 BAD_GATEWAY_STATUS = 502
 STREAMING_UNSUPPORTED_ERROR = "streaming responses are not supported"
@@ -85,8 +216,15 @@ STREAMING_UNSUPPORTED_ERROR = "streaming responses are not supported"
 async def healthz():
     return {"status": "ok", "providers": list(cfg.providers.keys())}
 
+@app.get("/metrics")
+async def metrics_endpoint(req: Request) -> Response:
+    _require_api_key(req)
+    return Response(_render_prometheus(), media_type=PROM_CONTENT_TYPE)
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(req: Request, body: ChatRequest):
+    _require_api_key(req)
     header_value = (
         req.headers.get(cfg.router.defaults.task_header)
         if cfg.router.defaults.task_header
@@ -95,52 +233,6 @@ async def chat_completions(req: Request, body: ChatRequest):
     task = header_value or cfg.router.defaults.task_header_value or "DEFAULT"
     start = time.perf_counter()
     req_id = str(uuid.uuid4())
-    if body.stream:
-        reason = STREAMING_UNSUPPORTED_ERROR
-        await metrics.write(
-            {
-                "req_id": req_id,
-                "ts": time.time(),
-                "task": task,
-                "provider": "unsupported",
-                "model": body.model,
-                "latency_ms": int((time.perf_counter() - start) * 1000),
-                "ok": False,
-                "status": 400,
-                "error": reason,
-                "usage_prompt": 0,
-                "usage_completion": 0,
-                "retries": 0,
-            }
-        )
-        return JSONResponse({"error": {"message": reason}}, status_code=400)
-    try:
-        route = planner.plan(task)
-    except ValueError as exc:
-        detail = str(exc) or "routing unavailable"
-        await metrics.write({
-            "req_id": req_id,
-            "ts": time.time(),
-            "task": task,
-            "provider": "unroutable",
-            "model": body.model,
-            "latency_ms": int((time.perf_counter() - start) * 1000),
-            "ok": False,
-            "status": 400,
-            "error": detail,
-            "usage_prompt": 0,
-            "usage_completion": 0,
-            "retries": 0,
-        })
-        raise HTTPException(status_code=400, detail=detail)
-    last_err: str | None = None
-    usage_prompt = 0
-    usage_completion = 0
-    attempt_count = 0
-    last_provider = route.primary
-    last_model = body.model
-    success_response: ProviderChatResponse | None = None
-    success_record: dict[str, object] | None = None
     normalized_messages = [
         message.model_dump(mode="json", exclude_none=True)
         for message in body.messages
@@ -180,9 +272,61 @@ async def chat_completions(req: Request, body: ChatRequest):
     else:
         max_tokens = cfg.router.defaults.max_tokens
 
+    provider_kwargs = {
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "tools": body.tools,
+        "tool_choice": body.tool_choice,
+        "function_call": function_call,
+        **typed_options,
+        **additional_options,
+    }
+
+    if body.stream:
+        return await _stream_chat_response(
+            model=body.model,
+            provider_name=body.model,
+            task=task,
+            req_id=req_id,
+            start=start,
+            normalized_messages=normalized_messages,
+            provider_kwargs=provider_kwargs,
+        )
+    try:
+        route = planner.plan(task)
+    except ValueError as exc:
+        detail = str(exc) or "routing unavailable"
+        await _log_metrics({
+            "req_id": req_id,
+            "ts": time.time(),
+            "task": task,
+            "provider": "unroutable",
+            "model": body.model,
+            "latency_ms": int((time.perf_counter() - start) * 1000),
+            "ok": False,
+            "status": 400,
+            "error": detail,
+            "usage_prompt": 0,
+            "usage_completion": 0,
+            "retries": 0,
+        })
+        raise HTTPException(status_code=400, detail=detail)
+    last_err: str | None = None
+    usage_prompt = 0
+    usage_completion = 0
+    attempt_count = 0
+    last_provider = route.primary
+    last_model = body.model
+    last_error_type: str | None = None
+    last_retry_after: int | None = None
+    success_response: ProviderChatResponse | None = None
+    success_record: dict[str, object] | None = None
+
     abort_processing = False
     abort_status: int | None = None
     abort_error: str | None = None
+    abort_error_type: str | None = None
+    abort_retry_after: int | None = None
     for provider_name in [route.primary] + route.fallback:
         prov = providers.get(provider_name)
         guard = guards.get(provider_name)
@@ -194,29 +338,43 @@ async def chat_completions(req: Request, body: ChatRequest):
                     resp = await prov.chat(
                         body.model,
                         normalized_messages,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        tools=body.tools,
-                        tool_choice=body.tool_choice,
-                        function_call=function_call,
-                        **typed_options,
-                        **additional_options,
+                        **provider_kwargs,
                     )
                 except Exception as exc:
                     last_err = str(exc)
                     last_provider = provider_name
                     last_model = prov.model or body.model
+                    last_error_type = "provider_error"
                     if isinstance(exc, UnsupportedContentBlockError):
                         abort_error = last_err or "unsupported content block"
                         abort_status = 400
+                        abort_error_type = "provider_error"
                         should_abort = True
                     elif isinstance(exc, httpx.HTTPStatusError):
                         status, message = _http_status_error_details(exc)
-                        if status is not None and status != 429 and 400 <= status < 500:
+                        retry_after = _retry_after_seconds(exc.response)
+                        error_type = _error_type_from_status(status)
+                        last_error_type = error_type
+                        if retry_after is not None:
+                            last_retry_after = retry_after
+                        if status == 429:
+                            abort_error = message
+                            abort_status = status
+                            abort_error_type = error_type
+                            abort_retry_after = (
+                                retry_after if retry_after is not None else DEFAULT_RETRY_AFTER_SECONDS
+                            )
+                            should_abort = True
+                        elif status is not None and 400 <= status < 500:
                             abort_error = message
                             last_err = abort_error
                             abort_status = status
+                            abort_error_type = error_type
                             should_abort = True
+                        elif status is not None and status >= 500 and last_retry_after is None:
+                            last_retry_after = (
+                                retry_after if retry_after is not None else DEFAULT_RETRY_AFTER_SECONDS
+                            )
                 else:
                     latency_ms = int((time.perf_counter() - start) * 1000)
                     usage_prompt = resp.usage_prompt_tokens or 0
@@ -250,7 +408,7 @@ async def chat_completions(req: Request, body: ChatRequest):
             break
 
     if success_response is not None and success_record is not None:
-        await metrics.write(success_record)
+        await _log_metrics(success_record)
         return JSONResponse(chat_response_from_provider(success_response))
 
     latency_ms = int((time.perf_counter() - start) * 1000)
@@ -259,6 +417,14 @@ async def chat_completions(req: Request, body: ChatRequest):
     if abort_processing and abort_status is not None:
         failure_status = abort_status
         failure_error = abort_error or failure_error
+    failure_error_type = (
+        abort_error_type or last_error_type or _error_type_from_status(failure_status)
+    )
+    failure_retry_after = abort_retry_after if abort_processing else last_retry_after
+    if failure_retry_after is None and (
+        failure_status == 429 or failure_status >= 500
+    ):
+        failure_retry_after = DEFAULT_RETRY_AFTER_SECONDS
     failure_record = {
         "req_id": req_id,
         "ts": time.time(),
@@ -273,7 +439,120 @@ async def chat_completions(req: Request, body: ChatRequest):
         "usage_completion": 0,
         "retries": max(attempt_count - 1, 0),
     }
-    await metrics.write(failure_record)
-    return JSONResponse(
-        {"error": {"message": failure_error}}, status_code=failure_status
-    )
+    if failure_retry_after is not None:
+        failure_record["retry_after"] = failure_retry_after
+    await _log_metrics(failure_record)
+    error_payload: dict[str, Any] = {
+        "message": failure_error,
+        "type": failure_error_type,
+    }
+    if failure_retry_after is not None:
+        error_payload["retry_after"] = failure_retry_after
+    return JSONResponse({"error": error_payload}, status_code=failure_status)
+
+
+async def _stream_chat_response(
+    *,
+    model: str,
+    provider_name: str,
+    task: str,
+    req_id: str,
+    start: float,
+    normalized_messages: list[dict[str, Any]],
+    provider_kwargs: dict[str, Any],
+) -> JSONResponse | StreamingResponse:
+    provider = providers.get(provider_name)
+    async def _write_metrics(
+        *,
+        ok: bool,
+        status: int,
+        latency_ms: int,
+        error: str | None = None,
+        provider_label: str | None = None,
+    ) -> None:
+        record = {
+            "req_id": req_id,
+            "ts": time.time(),
+            "task": task,
+            "provider": provider_label or provider_name,
+            "model": provider.model or model,
+            "latency_ms": latency_ms,
+            "ok": ok,
+            "status": status,
+            "retries": 0,
+            "usage_prompt": 0,
+            "usage_completion": 0,
+        }
+        if error is not None:
+            record["error"] = error
+        await _log_metrics(record)
+    if not hasattr(provider, "chat_stream"):
+        await _write_metrics(
+            ok=False,
+            status=400,
+            latency_ms=int((time.perf_counter() - start) * 1000),
+            error=STREAMING_UNSUPPORTED_ERROR,
+            provider_label="unsupported",
+        )
+        return JSONResponse({"error": {"message": STREAMING_UNSUPPORTED_ERROR}}, status_code=400)
+    guard = guards.get(provider_name)
+    await guard.__aenter__()
+    stream_iter = provider.chat_stream(model, normalized_messages, **provider_kwargs)
+    try:
+        first_event = await anext(stream_iter, None)
+    except httpx.HTTPStatusError as exc:
+        await guard.__aexit__(type(exc), exc, exc.__traceback__)
+        status, message = _http_status_error_details(exc)
+        status_code = status or BAD_GATEWAY_STATUS
+        retry_after = _retry_after_seconds(exc.response)
+        if retry_after is None and (status_code == 429 or status_code >= 500):
+            retry_after = DEFAULT_RETRY_AFTER_SECONDS
+        await _write_metrics(
+            ok=False,
+            status=status_code,
+            latency_ms=int((time.perf_counter() - start) * 1000),
+            error=message,
+        )
+        error_payload: dict[str, Any] = {
+            "message": message,
+            "type": _error_type_from_status(status_code),
+        }
+        if retry_after is not None:
+            error_payload["retry_after"] = retry_after
+        return JSONResponse({"error": error_payload}, status_code=status_code)
+    except Exception as exc:
+        await guard.__aexit__(type(exc), exc, exc.__traceback__)
+        raise
+    def _encode_event(raw_event: Any) -> bytes:
+        if isinstance(raw_event, dict):
+            event_name = raw_event.get("event")
+            data_field = raw_event.get("data")
+        else:
+            event_name = None
+            data_field = raw_event
+        if not isinstance(event_name, str):
+            event_name = None
+        if isinstance(data_field, str):
+            data_text = data_field
+        elif data_field is None:
+            data_text = ""
+        else:
+            data_text = json.dumps(data_field)
+        lines = []
+        if event_name:
+            lines.append(f"event: {event_name}")
+        lines.append(f"data: {data_text}")
+        return ("\n".join(lines) + "\n\n").encode("utf-8")
+
+    async def event_source() -> Any:
+        try:
+            if first_event is not None:
+                yield _encode_event(first_event)
+            async for raw_event in stream_iter:
+                yield _encode_event(raw_event)
+        finally:
+            latency_ms = int((time.perf_counter() - start) * 1000)
+            await guard.__aexit__(None, None, None)
+            await _write_metrics(ok=True, status=200, latency_ms=latency_ms)
+        yield b"data: [DONE]\n\n"
+    return StreamingResponse(event_source(), media_type="text/event-stream")
