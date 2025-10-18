@@ -6,7 +6,7 @@ import pytest
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from scripts.export_pytest_junit import convert_junit_to_jsonl
+from scripts.export_pytest_junit import _strip_namespace, convert_junit_to_jsonl
 
 
 def write_file(path: Path, content: str) -> None:
@@ -16,6 +16,17 @@ def write_file(path: Path, content: str) -> None:
 def read_json_lines(path: Path) -> list[dict[str, object]]:
     with path.open(encoding="utf-8") as handle:
         return [json.loads(line) for line in handle]
+
+
+@pytest.mark.parametrize(
+    ("tag", "expected"),
+    [
+        ("{http://example.com}testcase", "testcase"),
+        ("testcase", "testcase"),
+    ],
+)
+def test_strip_namespace_handles_prefixed_and_plain_tags(tag: str, expected: str) -> None:
+    assert _strip_namespace(tag) == expected
 
 
 def test_convert_junit_to_jsonl_handles_large_suites(tmp_path: Path) -> None:
