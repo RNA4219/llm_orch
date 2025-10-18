@@ -496,33 +496,8 @@ async def _stream_chat_response(
         )
         return JSONResponse({"error": {"message": STREAMING_UNSUPPORTED_ERROR}}, status_code=400)
     guard = guards.get(provider_name)
-    await guard.__aenter__()
-    stream_iter = provider.chat_stream(model, normalized_messages, **provider_kwargs)
-    try:
-        first_event = await anext(stream_iter, None)
-    except httpx.HTTPStatusError as exc:
-        await guard.__aexit__(type(exc), exc, exc.__traceback__)
-        status, message = _http_status_error_details(exc)
-        status_code = status or BAD_GATEWAY_STATUS
-        retry_after = _retry_after_seconds(exc.response)
-        if retry_after is None and (status_code == 429 or status_code >= 500):
-            retry_after = DEFAULT_RETRY_AFTER_SECONDS
-        await _write_metrics(
-            ok=False,
-            status=status_code,
-            latency_ms=int((time.perf_counter() - start) * 1000),
-            error=message,
-        )
-        error_payload: dict[str, Any] = {
-            "message": message,
-            "type": _error_type_from_status(status_code),
-        }
-        if retry_after is not None:
-            error_payload["retry_after"] = retry_after
-        return JSONResponse({"error": error_payload}, status_code=status_code)
-    except Exception as exc:
-        await guard.__aexit__(type(exc), exc, exc.__traceback__)
-        raise
+    queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
+
     def _encode_event(raw_event: Any) -> bytes:
         if isinstance(raw_event, dict):
             event_name = raw_event.get("event")
@@ -544,15 +519,97 @@ async def _stream_chat_response(
         lines.append(f"data: {data_text}")
         return ("\n".join(lines) + "\n\n").encode("utf-8")
 
+    async def _emit_error(status_code: int, message: str, retry_after: int | None) -> None:
+        await _write_metrics(
+            ok=False,
+            status=status_code,
+            latency_ms=int((time.perf_counter() - start) * 1000),
+            error=message,
+        )
+        await queue.put(
+            ("error", {"status": status_code, "message": message, "retry_after": retry_after})
+        )
+
+    async def producer() -> None:
+        try:
+            async with guard:
+                stream_iter = provider.chat_stream(
+                    model,
+                    normalized_messages,
+                    **provider_kwargs,
+                )
+                try:
+                    first_event = await anext(stream_iter, None)
+                except httpx.HTTPStatusError as exc:
+                    status, message = _http_status_error_details(exc)
+                    status_code = status or BAD_GATEWAY_STATUS
+                    retry_after = _retry_after_seconds(exc.response)
+                    if retry_after is None and (
+                        status_code == 429 or status_code >= 500
+                    ):
+                        retry_after = DEFAULT_RETRY_AFTER_SECONDS
+                    await _emit_error(status_code, message, retry_after)
+                    return
+                except Exception as exc:
+                    await _emit_error(BAD_GATEWAY_STATUS, str(exc) or "provider error", None)
+                    return
+                if first_event is not None:
+                    await queue.put(("data", _encode_event(first_event)))
+                async for raw_event in stream_iter:
+                    await queue.put(("data", _encode_event(raw_event)))
+                await _write_metrics(
+                    ok=True,
+                    status=200,
+                    latency_ms=int((time.perf_counter() - start) * 1000),
+                )
+                await queue.put(("done", None))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            await _emit_error(BAD_GATEWAY_STATUS, str(exc) or "provider error", None)
+
+    producer_task = asyncio.create_task(producer())
+    first_kind, first_payload = await queue.get()
+    if first_kind == "error":
+        await producer_task
+        status_code = int(first_payload["status"])
+        message = str(first_payload["message"]) if first_payload["message"] is not None else ""
+        retry_after = first_payload["retry_after"]
+        error_payload: dict[str, Any] = {
+            "message": message,
+            "type": _error_type_from_status(status_code),
+        }
+        if retry_after is not None:
+            error_payload["retry_after"] = retry_after
+        return JSONResponse({"error": error_payload}, status_code=status_code)
+    if first_kind not in {"data", "done"}:
+        await producer_task
+        raise RuntimeError("unexpected stream signal")
+    first_chunk: bytes | None = None
+    if first_kind == "data":
+        first_chunk = first_payload
+
     async def event_source() -> Any:
         try:
-            if first_event is not None:
-                yield _encode_event(first_event)
-            async for raw_event in stream_iter:
-                yield _encode_event(raw_event)
+            if first_chunk is not None:
+                yield first_chunk
+            if first_kind == "done":
+                yield b"data: [DONE]\n\n"
+                return
+            while True:
+                kind, payload = await queue.get()
+                if kind == "data":
+                    yield payload
+                elif kind == "done":
+                    yield b"data: [DONE]\n\n"
+                    break
         finally:
-            latency_ms = int((time.perf_counter() - start) * 1000)
-            await guard.__aexit__(None, None, None)
-            await _write_metrics(ok=True, status=200, latency_ms=latency_ms)
-        yield b"data: [DONE]\n\n"
+            if not producer_task.done():
+                producer_task.cancel()
+            try:
+                await producer_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
     return StreamingResponse(event_source(), media_type="text/event-stream")
