@@ -682,6 +682,10 @@ class OllamaProvider(BaseProvider):
             "options": options,
         }
         if response_format is not None:
+            if not isinstance(response_format, dict):
+                raise ValueError(
+                    "OllamaProvider requires response_format to be a dictionary."
+                )
             format_type = response_format.get("type")
             if format_type == "json_object":
                 payload["format"] = "json"
