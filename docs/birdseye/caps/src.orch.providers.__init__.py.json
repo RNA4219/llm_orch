@@ -1,0 +1,34 @@
+{
+  "id": "src/orch/providers/__init__.py",
+  "role": "application",
+  "public_api": [
+    "ProviderRegistry",
+    "BaseProvider",
+    "AnthropicProvider",
+    "OllamaProvider",
+    "OpenAICompatProvider",
+    "DummyProvider",
+    "UnsupportedContentBlockError",
+    "ProviderStreamChunk"
+  ],
+  "summary": "プロバイダ実装の中核。Anthropic/Ollama/Dummyを含む各アダプタでチャット/ストリームAPIを正規化し、tool変換やusage集約を担う。UnsupportedContentBlockErrorで不正なcontent blockを検知し、ProviderRegistryが設定から動的にインスタンス化する。",
+  "deps_out": [
+    "src/orch/router.py",
+    "src/orch/types.py",
+    "src/orch/providers/openai.py"
+  ],
+  "deps_in": [
+    "src/orch/server.py",
+    "src/orch/router.py"
+  ],
+  "risks": [
+    "HTTPクライアント例外がProviderChatResponse以外でraiseされるとサーバ側でフォールバック扱いになる",
+    "Tool正規化ロジックの差異でAnthropic/OpenAI互換が崩れるとSSEチャンク整形が失敗する"
+  ],
+  "tests": [
+    "tests/test_providers_openai.py",
+    "tests/test_providers_anthropic.py",
+    "tests/test_providers_ollama.py",
+    "tests/test_providers_registry.py"
+  ]
+}

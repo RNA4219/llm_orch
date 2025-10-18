@@ -5,17 +5,19 @@
     "GET /healthz",
     "POST /v1/chat/completions"
   ],
-  "summary": "FastAPI アプリのメイン。設定読込→RoutePlanner/ProviderGuardsを初期化し、healthzとchat completionsエンドポイントを提供。ストリーム無効時は400で応答し、メトリクスをJSONLに記録。",
+  "summary": "FastAPIエントリポイント。設定を読み込みProviderRegistry/RoutePlanner/ProviderGuardsを初期化し、RPMとTPMをまとめて制御するガードでPrometheusメトリクスとJSONLロガーへ記録。SSEストリーミングと非ストリーミングを両対応し、プロバイダフォールバックを逐次試行する。",
   "deps_out": [
     "src/orch/router.py",
-    "src/orch/providers.py",
+    "src/orch/providers/__init__.py",
     "src/orch/rate_limiter.py",
     "src/orch/metrics.py",
     "src/orch/types.py"
   ],
   "deps_in": [],
   "risks": [
-    "stream: true を受けると明示的に400を返すためストリーミング要求はサポート外"
+    "SSEストリームはクライアント切断検知までガードを保持するためリソース占有が長引く恐れ",
+    "フォールバック試行が全滅すると429/5xx時にRetry-After推定へ依存する",
+    "PrometheusカウンタとTPMバケットは設定とズレるとメトリクス解釈を誤る"
   ],
   "tests": [
     "tests/test_server_routes.py",
