@@ -83,6 +83,31 @@ self_modification:
     assert load_forbidden_patterns(policy) == ["core/schema/**", "auth/**"]
 
 
+@pytest.mark.parametrize(
+    "item, expected",
+    [
+        ("- /infra/**  # コメント", ["infra/**"]),
+        ("- '/secure/**'  # コメント", ["secure/**"]),
+        ("- \"/quoted/**\"  # コメント", ["quoted/**"]),
+        ("- \"#literal\"  # コメント", ["#literal"]),
+        ("- # コメントのみ", []),
+    ],
+)
+def test_load_forbidden_patterns_supports_inline_comments(tmp_path, item, expected):
+    policy = tmp_path / "policy.yaml"
+    policy.write_text(
+        "\n".join(
+            [
+                "self_modification:",
+                "  forbidden_paths:",
+                f"    {item}",
+            ]
+        )
+    )
+
+    assert load_forbidden_patterns(policy) == expected
+
+
 def test_main_returns_error_when_priority_invalid(monkeypatch, tmp_path, capsys):
     event_file = tmp_path / "event.json"
     event_file.write_text("""{"pull_request": {"body": "invalid"}}""")
