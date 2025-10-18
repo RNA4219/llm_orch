@@ -58,13 +58,24 @@ def get_changed_paths(refspec: str) -> List[str]:
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
+def _normalize_forbidden_value(value: str) -> str:
+    value = value.lstrip("/")
+    while value.startswith("./") or value.startswith("../"):
+        if value.startswith("./"):
+            value = value[2:]
+        else:
+            value = value[3:]
+        value = value.lstrip("/")
+    return value
+
+
 def find_forbidden_matches(paths: Iterable[str], patterns: Sequence[str]) -> List[str]:
     matches: List[str] = []
     for path in paths:
-        normalized_path = path.lstrip("./")
+        normalized_path = _normalize_forbidden_value(path)
         path_object = Path(normalized_path)
         for pattern in patterns:
-            normalized_pattern = pattern.lstrip("/")
+            normalized_pattern = _normalize_forbidden_value(pattern)
             if path_object.match(normalized_pattern):
                 matches.append(normalized_path)
                 break

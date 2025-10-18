@@ -8,7 +8,7 @@ import pytest
 
 sys.path.append(str(Path(__file__).resolve().parents[1] / "workflow-cookbook-main"))
 
-from tools.ci.check_governance_gate import validate_priority_score
+from tools.ci.check_governance_gate import find_forbidden_matches, validate_priority_score
 
 
 @pytest.mark.parametrize(
@@ -47,3 +47,10 @@ def test_validate_priority_score_returns_true_when_format_valid() -> None:
     """.strip()
 
     assert validate_priority_score(body) is True
+
+
+def test_find_forbidden_matches_supports_leading_dot_slash_patterns() -> None:
+    paths = ["docs/foo.md"]
+    patterns = ["./docs/**"]
+
+    assert find_forbidden_matches(paths, patterns) == ["docs/foo.md"]
