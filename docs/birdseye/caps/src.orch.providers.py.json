@@ -1,0 +1,28 @@
+{
+  "id": "src/orch/providers.py",
+  "role": "application",
+  "public_api": [
+    "ProviderRegistry",
+    "OpenAICompatProvider",
+    "AnthropicProvider",
+    "OllamaProvider"
+  ],
+  "summary": "プロバイダ定義からHTTPクライアント呼び出しを行う層。OpenAI/Anthropic/Ollama/Dummy互換を提供し、tool呼び出し正規化と追加オプションマージ、UnsupportedContentBlockErrorを提供。",
+  "deps_out": [
+    "src/orch/router.py",
+    "src/orch/types.py"
+  ],
+  "deps_in": [
+    "src/orch/server.py",
+    "src/orch/router.py"
+  ],
+  "risks": [
+    "プロバイダ先のHTTPエラーは例外として伝播し、chat_completionsで再試行対象となる"
+  ],
+  "tests": [
+    "tests/test_providers_openai.py",
+    "tests/test_providers_anthropic.py",
+    "tests/test_providers_ollama.py",
+    "tests/test_providers_registry.py"
+  ]
+}
