@@ -202,6 +202,35 @@ def test_convert_junit_to_jsonl_sets_fail_status_for_failure(tmp_path: Path) -> 
     ]
 
 
+def test_convert_junit_to_jsonl_handles_namespaced_elements(tmp_path: Path) -> None:
+    xml_path = tmp_path / "pytest.xml"
+    output_path = tmp_path / "out.jsonl"
+    write_file(
+        xml_path,
+        """
+        <ns:testsuite xmlns:ns="http://example.com">
+            <ns:testcase classname="pkg.TestCase" name="test_failure" time="0.321">
+                <ns:failure message="boom">ValueError</ns:failure>
+            </ns:testcase>
+        </ns:testsuite>
+        """,
+    )
+
+    convert_junit_to_jsonl(xml_path, output_path)
+
+    records = read_json_lines(output_path)
+    assert records == [
+        {
+            "classname": "pkg.TestCase",
+            "details": "ValueError",
+            "message": "boom",
+            "name": "test_failure",
+            "status": "fail",
+            "duration_ms": 321,
+        }
+    ]
+
+
 def test_convert_junit_to_jsonl_handles_skipped_and_errors(tmp_path: Path) -> None:
     xml_path = tmp_path / "pytest.xml"
     output_path = tmp_path / "out.jsonl"

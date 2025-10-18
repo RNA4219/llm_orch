@@ -15,7 +15,7 @@ _STATUS_TAGS: dict[str, str] = {
 
 
 def _strip_namespace(tag: str) -> str:
-    if tag.startswith("{"):
+    if "}" in tag:
         return tag.split("}", 1)[1]
     return tag
 
@@ -44,12 +44,6 @@ def _parse_duration_ms(time_str: str | None) -> int | None:
         return int(quantized)
     except (InvalidOperation, OverflowError, ValueError):
         return None
-
-
-def _strip_namespace(tag: str) -> str:
-    if "}" in tag:
-        return tag.split("}", 1)[1]
-    return tag
 
 
 def _iter_testcases(root: ET.Element) -> Iterable[ET.Element]:
