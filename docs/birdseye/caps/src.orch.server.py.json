@@ -5,7 +5,7 @@
     "GET /healthz",
     "POST /v1/chat/completions"
   ],
-  "summary": "FastAPIエントリポイント。設定を読み込みProviderRegistry/RoutePlanner/ProviderGuardsを初期化し、RPMとTPMをまとめて制御するガードでPrometheusメトリクスとJSONLロガーへ記録。SSEストリーミングと非ストリーミングを両対応し、プロバイダフォールバックを逐次試行する。",
+  "summary": "FastAPIエントリポイント。設定を読み込みProviderRegistry/RoutePlanner/ProviderGuardsを初期化し、RPM/TPM統合ガード越しにフォールバック順でプロバイダ呼び出しを実行。SSE/非SSEを動的に切り替えつつPrometheusメトリクスとJSONLログへ書き出す。",
   "deps_out": [
     "src/orch/router.py",
     "src/orch/providers/__init__.py",
@@ -15,9 +15,9 @@
   ],
   "deps_in": [],
   "risks": [
-    "SSEストリームはクライアント切断検知までガードを保持するためリソース占有が長引く恐れ",
-    "フォールバック試行が全滅すると429/5xx時にRetry-After推定へ依存する",
-    "PrometheusカウンタとTPMバケットは設定とズレるとメトリクス解釈を誤る"
+    "SSE接続はクライアント切断までGuard/HTTPリソースを保持し続ける",
+    "フォールバック連鎖でRPM/TPM在庫が枯渇すると再試行が遅延または失敗する",
+    "Prometheus/JSONL出力とTPMバケットの設定ズレでメトリクス/制限値の解釈が狂う"
   ],
   "tests": [
     "tests/test_server_routes.py",
