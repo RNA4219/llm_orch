@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, Iterable, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -58,6 +58,18 @@ class ProviderChatResponse(BaseModel):
     usage_prompt_tokens: Optional[int] = 0
     usage_completion_tokens: Optional[int] = 0
     choices: list[ProviderChatChoice] | None = None
+
+
+class ProviderStreamChunk(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    event: str | None = None
+    type: str | None = None
+    status_code: int | None = None
+    model: str | None = None
+    choices: list[dict[str, Any]] | None = None
+    usage: dict[str, int] | None = None
+    error: dict[str, Any] | None = None
 
 
 def chat_response_from_provider(p: ProviderChatResponse) -> dict[str, Any]:
@@ -150,3 +162,98 @@ def chat_response_from_provider(p: ProviderChatResponse) -> dict[str, Any]:
             + (p.usage_completion_tokens or 0),
         },
     }
+
+
+def provider_chat_response_from_stream(
+    chunks: Iterable[ProviderStreamChunk | dict[str, Any]]
+) -> ProviderChatResponse:
+    def merge_content(existing: Any, update: Any) -> Any:
+        if update is None:
+            return existing
+        if isinstance(update, str):
+            if isinstance(existing, str):
+                return existing + update
+            if isinstance(existing, list):
+                return [*existing, update]
+            return update
+        if isinstance(update, list):
+            if isinstance(existing, list):
+                return [*existing, *update]
+            if isinstance(existing, str):
+                return [existing, *update]
+            return list(update)
+        return update
+
+    def merge_delta(target: dict[str, Any], delta: dict[str, Any]) -> None:
+        target["content"] = merge_content(target.get("content"), delta.get("content"))
+        tool_calls = delta.get("tool_calls")
+        if isinstance(tool_calls, list):
+            target["tool_calls"] = tool_calls
+        function_call = delta.get("function_call")
+        if isinstance(function_call, dict):
+            merged = target.setdefault("function_call", {})
+            for key, value in function_call.items():
+                existing_value = merged.get(key)
+                if isinstance(value, str) and isinstance(existing_value, str):
+                    merged[key] = existing_value + value
+                else:
+                    merged[key] = value
+        for key, value in delta.items():
+            if key not in {"content", "tool_calls", "function_call"}:
+                target[key] = value
+
+    aggregated_message: dict[str, Any] = {}
+    finish_reason: str | None = None
+    model_name: str | None = None
+    usage_prompt_tokens = 0
+    usage_completion_tokens = 0
+
+    for raw_chunk in chunks:
+        if isinstance(raw_chunk, ProviderStreamChunk):
+            chunk = raw_chunk
+        elif isinstance(raw_chunk, dict):
+            chunk = ProviderStreamChunk.model_validate(raw_chunk)
+        else:
+            msg = f"Unsupported stream chunk type: {type(raw_chunk)!r}"
+            raise TypeError(msg)
+        if chunk.model:
+            model_name = chunk.model
+        if chunk.error:
+            error_payload = chunk.error
+            message = error_payload.get("message") if isinstance(error_payload, dict) else None
+            raise RuntimeError(message or "Stream aborted due to provider error")
+        for choice in chunk.choices or []:
+            delta = choice.get("delta")
+            if isinstance(delta, dict):
+                merge_delta(aggregated_message, delta)
+            finish_value = choice.get("finish_reason")
+            if isinstance(finish_value, str):
+                finish_reason = finish_value
+        if chunk.usage:
+            prompt_value = chunk.usage.get("prompt_tokens")
+            completion_value = chunk.usage.get("completion_tokens")
+            if isinstance(prompt_value, int):
+                usage_prompt_tokens = prompt_value
+            if isinstance(completion_value, int):
+                usage_completion_tokens = completion_value
+
+    return ProviderChatResponse(
+        model=model_name or "",
+        content=aggregated_message.get("content"),
+        finish_reason=finish_reason,
+        tool_calls=(
+            value if isinstance(value := aggregated_message.get("tool_calls"), list) else None
+        ),
+        function_call=(
+            value if isinstance(value := aggregated_message.get("function_call"), dict) else None
+        ),
+        usage_prompt_tokens=usage_prompt_tokens,
+        usage_completion_tokens=usage_completion_tokens,
+        choices=[
+            ProviderChatChoice(
+                index=0,
+                message=aggregated_message or None,
+                finish_reason=finish_reason,
+            )
+        ] if aggregated_message or finish_reason else None,
+    )

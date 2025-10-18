@@ -2,12 +2,12 @@ import json
 import os
 import re
 from urllib.parse import urlparse, urlunparse
-from typing import Dict, Any, List
+from typing import Any, AsyncIterator, Dict, List
 
 import httpx
 
 from .router import ProviderDef
-from .types import ProviderChatResponse
+from .types import ProviderChatResponse, ProviderStreamChunk
 
 
 class UnsupportedContentBlockError(ValueError):
@@ -653,6 +653,50 @@ class AnthropicProvider(BaseProvider):
         )
 
 class OllamaProvider(BaseProvider):
+    def _prepare_request(
+        self,
+        model: str,
+        messages: List[dict[str, Any]],
+        *,
+        temperature: float,
+        max_tokens: int,
+        top_p: float | None,
+        response_format: dict[str, Any] | None,
+        extra_options: dict[str, Any],
+        stream: bool,
+    ) -> tuple[str, dict[str, Any]]:
+        options: dict[str, Any] = {"temperature": temperature, "num_predict": max_tokens}
+        payload: dict[str, Any] = {
+            "model": self.defn.model or model,
+            "messages": messages,
+            "stream": stream,
+            "options": options,
+        }
+        if response_format is not None:
+            if not isinstance(response_format, dict):
+                raise ValueError(
+                    "OllamaProvider requires response_format to be a dictionary."
+                )
+            format_type = response_format.get("type")
+            if format_type == "json_object":
+                payload["format"] = "json"
+            else:
+                raise ValueError(
+                    "OllamaProvider only supports response_format type 'json_object'."
+                )
+        cleaned_options = {
+            key: value
+            for key, value in extra_options.items()
+            if key not in self._RESERVED_OPTION_KEYS and value is not None
+        }
+        if top_p is not None:
+            options["top_p"] = top_p
+            cleaned_options.pop("top_p", None)
+        if cleaned_options:
+            options.update(cleaned_options)
+        url = f"{self.defn.base_url.rstrip('/')}/api/chat"
+        return url, payload
+
     async def chat(
         self,
         model: str,
@@ -670,39 +714,19 @@ class OllamaProvider(BaseProvider):
         response_format: dict[str, Any] | None = None,
         **extra_options: Any,
     ) -> ProviderChatResponse:
-        url = f"{self.defn.base_url.rstrip('/')}/api/chat"
         _ = tools
         _ = tool_choice
         _ = function_call
-        options: dict[str, Any] = {"temperature": temperature, "num_predict": max_tokens}
-        payload = {
-            "model": self.defn.model or model,
-            "messages": messages,
-            "stream": False,
-            "options": options,
-        }
-        if response_format is not None:
-            if not isinstance(response_format, dict):
-                raise ValueError(
-                    "OllamaProvider requires response_format to be a dictionary."
-                )
-            format_type = response_format.get("type")
-            if format_type == "json_object":
-                payload["format"] = "json"
-            else:
-                raise ValueError(
-                    "OllamaProvider only supports response_format type 'json_object'."
-                )
-        cleaned_options: dict[str, Any] = {
-            key: value
-            for key, value in extra_options.items()
-            if key not in self._RESERVED_OPTION_KEYS and value is not None
-        }
-        if top_p is not None:
-            options["top_p"] = top_p
-            cleaned_options.pop("top_p", None)
-        if cleaned_options:
-            options.update(cleaned_options)
+        url, payload = self._prepare_request(
+            model,
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+            response_format=response_format,
+            extra_options=extra_options,
+            stream=False,
+        )
         async with httpx.AsyncClient(timeout=120) as client:
             r = await client.post(url, json=payload)
             r.raise_for_status()
@@ -719,6 +743,115 @@ class OllamaProvider(BaseProvider):
             finish_reason=finish_reason,
             tool_calls=tool_calls if isinstance(tool_calls, list) else None,
         )
+
+    async def stream_chat(
+        self,
+        model: str,
+        messages: List[dict[str, Any]],
+        temperature=0.2,
+        max_tokens=2048,
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: dict[str, Any] | str | None = None,
+        function_call: dict[str, Any] | str | None = None,
+        top_p: float | None = None,
+        frequency_penalty: float | None = None,
+        presence_penalty: float | None = None,
+        logit_bias: dict[str, float] | None = None,
+        response_format: dict[str, Any] | None = None,
+        **extra_options: Any,
+    ) -> AsyncIterator[ProviderStreamChunk]:
+        _ = (
+            tools,
+            tool_choice,
+            function_call,
+            frequency_penalty,
+            presence_penalty,
+            logit_bias,
+        )
+        url, payload = self._prepare_request(
+            model,
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+            response_format=response_format,
+            extra_options=extra_options,
+            stream=True,
+        )
+        model_name = self.defn.model or model
+        async with httpx.AsyncClient(timeout=120) as client:
+            stream_call = client.stream("POST", url, json=payload)
+            if hasattr(stream_call, "__await__"):
+                stream_context = await stream_call  # type: ignore[func-returns-value]
+            else:
+                stream_context = stream_call
+            async with stream_context as response:
+                async for raw_line in response.aiter_lines():
+                    if not raw_line:
+                        continue
+                    try:
+                        event_payload = json.loads(raw_line)
+                    except json.JSONDecodeError:
+                        continue
+                    status_code = event_payload.get("status_code")
+                    if status_code == 429:
+                        error_payload = event_payload.get("error")
+                        if not isinstance(error_payload, dict):
+                            error_payload = {"message": str(error_payload)}
+                        yield ProviderStreamChunk(
+                            event="abort",
+                            type="abort",
+                            status_code=429,
+                            model=model_name,
+                            choices=[{"index": 0, "finish_reason": "rate_limit"}],
+                            error=error_payload,
+                        )
+                        break
+                    event_name = event_payload.get("event")
+                    delta_payload = event_payload.get("delta")
+                    if event_name == "delta" or isinstance(delta_payload, dict):
+                        choices = (
+                            [{"index": 0, "delta": delta_payload}]
+                            if isinstance(delta_payload, dict)
+                            else None
+                        )
+                        yield ProviderStreamChunk(
+                            event="delta",
+                            type="delta",
+                            model=model_name,
+                            choices=choices,
+                        )
+                        continue
+                    if event_name == "done" or event_payload.get("done"):
+                        usage_payload = event_payload.get("usage")
+                        usage: dict[str, int] | None = None
+                        if isinstance(usage_payload, dict):
+                            prompt = int(usage_payload.get("prompt_tokens") or 0)
+                            completion = int(usage_payload.get("completion_tokens") or 0)
+                            total = usage_payload.get("total_tokens")
+                            usage = {
+                                "prompt_tokens": prompt,
+                                "completion_tokens": completion,
+                                "total_tokens": total if isinstance(total, int) else prompt + completion,
+                            }
+                        finish_reason = (
+                            event_payload.get("done_reason")
+                            or event_payload.get("finish_reason")
+                            or "stop"
+                        )
+                        yield ProviderStreamChunk(
+                            event="done",
+                            type="done",
+                            model=model_name,
+                            choices=[{"index": 0, "finish_reason": finish_reason}],
+                            usage=usage,
+                        )
+                        break
+                    yield ProviderStreamChunk(
+                        event=event_name,
+                        model=model_name,
+                    )
 
 class DummyProvider(BaseProvider):
     async def chat(
