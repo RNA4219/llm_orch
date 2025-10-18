@@ -85,6 +85,43 @@ def assert_single_req_id(records: list[dict[str, object]]) -> None:
     assert req_id
 
 
+def test_chat_streams_events(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+
+    async def stream_chat(*_: object, **__: object):
+        yield {"event": "chunk", "data": {"choices": [{"delta": {"content": "hi"}}]}}
+        yield {"event": "done", "data": {}}
+
+    class MockProvider:
+        model = "dummy"
+
+        async def chat_stream(self, *args: object, **kwargs: object):
+            async for item in stream_chat(*args, **kwargs):
+                yield item
+
+    monkeypatch.setitem(
+        server_module.providers.providers, "dummy", MockProvider()
+    )
+
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "dummy",
+            "messages": [{"role": "user", "content": "hi"}],
+            "stream": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    body = response.text
+    assert "\"delta\"" in body
+    assert "data: [DONE]" in body
+
 def test_chat_accepts_tool_role_messages(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -249,6 +286,67 @@ def test_chat_passes_typed_options_once(
     assert records
     assert records[-1]["status"] == 200
 
+def test_chat_returns_retry_after_on_429(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+
+    async def failing_chat(*_: object, **__: object) -> None:
+        response = httpx.Response(429, headers={"Retry-After": "3"}, request=httpx.Request("POST", "http://x"))
+        raise httpx.HTTPStatusError("rate limit", request=response.request, response=response)
+
+    class MockProvider:
+        model = "dummy"
+
+        async def chat(self, *args: object, **kwargs: object) -> None:
+            await failing_chat(*args, **kwargs)
+
+    monkeypatch.setitem(server_module.providers.providers, "dummy", MockProvider())
+
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "dummy",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+
+    assert response.status_code == 429
+    payload = response.json()
+    assert payload["error"]["retry_after"] == 3
+
+
+def test_metrics_endpoint_returns_prometheus_text(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ORCH_INBOUND_API_KEYS", "")
+    monkeypatch.setenv("ORCH_CORS_ALLOW_ORIGINS", "")
+    app = load_app("1")
+    client = TestClient(app)
+    response = client.get("/metrics")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/plain")
+    assert "# HELP" in response.text
+
+
+def test_chat_requires_api_key_when_configured(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ORCH_INBOUND_API_KEYS", "expected")
+    monkeypatch.setenv("ORCH_CORS_ALLOW_ORIGINS", "https://example.com")
+    app = load_app("1")
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"Origin": "https://example.com"},
+        json={
+            "model": "dummy",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+    assert response.status_code == 401
 
 def test_chat_accepts_tool_choice_strings(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch

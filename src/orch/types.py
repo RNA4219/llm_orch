@@ -1,4 +1,5 @@
-from typing import Any, Dict, List, Literal, Optional, Union
+from collections import defaultdict
+from typing import Any, Dict, Iterable, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -46,6 +47,26 @@ class ProviderChatChoice(BaseModel):
         if key in data:
             return data[key]
         raise KeyError(key)
+
+
+class ProviderStreamChoice(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    index: int = 0
+    delta: dict[str, Any] | str | None = None
+    role: Literal["system", "user", "assistant", "tool"] | None = None
+    content: str | list[dict[str, Any]] | None = None
+    tool_calls: list[dict[str, Any]] | None = None
+    function_call: dict[str, Any] | None = None
+    finish_reason: str | None = None
+    message: dict[str, Any] | None = None
+
+
+class ProviderStreamChunk(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    choices: list[ProviderStreamChoice] = Field(default_factory=list)
+    usage: dict[str, int] | None = None
 
 
 class ProviderChatResponse(BaseModel):

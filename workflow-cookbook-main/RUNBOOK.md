@@ -23,6 +23,7 @@ next_review_due: 2025-11-14
 ## Observability
 
 - ログ/メトリクスの確認点、失敗時の兆候
+- API `/metrics` （Prometheusエクスポート）で `orch_requests_total` / `orch_request_latency_seconds` を確認
 - インシデント発生時は docs/IN-YYYYMMDD-XXX.md に記録し、最新サンプル（[IN-20250115-001](docs/IN-20250115-001.md)）を参照して検知ログ・メトリクスの抜粋を添付
 
 ## Rollback / Retry
