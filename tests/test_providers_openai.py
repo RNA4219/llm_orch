@@ -429,3 +429,104 @@ async def test_openai_stream_chat_stops_on_rate_limit(monkeypatch: pytest.Monkey
         await consume()
 
     assert stop_event.is_set(), "429発生時はストップイベントが発火する前提"
+
+
+def test_openai_chat_stream_normalizes_sse(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "secret")
+    provider = make_provider("https://api.openai.com")
+    captured_calls: list[dict[str, Any]] = []
+
+    class FakeStreamResponse:
+        def __init__(self, lines: list[str], *, headers: dict[str, str] | None = None) -> None:
+            self._lines = lines
+            self.headers = headers or {}
+            self.status_code = 200
+
+        async def aiter_lines(self) -> AsyncGenerator[str, None]:
+            for line in self._lines:
+                yield line
+
+        def raise_for_status(self) -> None:
+            return None
+
+    class FakeStreamContext:
+        def __init__(self, response: FakeStreamResponse) -> None:
+            self._response = response
+
+        async def __aenter__(self) -> FakeStreamResponse:
+            return self._response
+
+        async def __aexit__(self, exc_type, exc: BaseException | None, tb: Any) -> None:
+            return None
+
+    lines = [
+        "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"}}]}",
+        "",
+        "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hel\"}}]}",
+        "",
+        "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"lo\"}}]}",
+        "",
+        "data: {\"choices\":[{\"index\":0,\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7}}",
+        "",
+        "data: {\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7}}",
+        "",
+        "data: {\"error\":{\"message\":\"overload\",\"type\":\"server_error\"}}",
+        "",
+        "data: [DONE]",
+        "",
+    ]
+
+    def fake_stream(self: httpx.AsyncClient, method: str, url: str, **kwargs: Any) -> FakeStreamContext:
+        captured_calls.append({"method": method, "url": url, "json": kwargs.get("json")})
+        assert method == "POST"
+        payload = kwargs.get("json")
+        assert isinstance(payload, dict)
+        assert payload.get("stream") is True
+        return FakeStreamContext(
+            FakeStreamResponse(lines, headers={"retry-after": "2"}),
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "stream", fake_stream)
+
+    async def collect() -> list[ProviderStreamChunkModel]:
+        results: list[ProviderStreamChunkModel] = []
+        async for chunk in provider.chat_stream(  # type: ignore[attr-defined]
+            model="gpt-4o",
+            messages=[{"role": "user", "content": "hello"}],
+        ):
+            assert isinstance(chunk, ProviderStreamChunkModel)
+            results.append(chunk)
+        return results
+
+    chunks = asyncio.run(collect())
+
+    assert captured_calls
+    assert all(call["url"].endswith("/v1/chat/completions") for call in captured_calls)
+
+    assert [chunk.event_type for chunk in chunks[:4]] == [
+        "chunk",
+        "chunk",
+        "chunk",
+        "chunk",
+    ]
+    assert [chunk.delta for chunk in chunks[:3]] == [
+        {"role": "assistant"},
+        {"content": "Hel"},
+        {"content": "lo"},
+    ]
+    assert chunks[3].finish_reason == "stop"
+    assert chunks[3].usage == {"prompt_tokens": 5, "completion_tokens": 7}
+    assert chunks[4].usage == {"prompt_tokens": 5, "completion_tokens": 7}
+    assert chunks[5].event_type == "error"
+    assert chunks[5].error == {
+        "message": "overload",
+        "type": "server_error",
+        "retry_after": 2,
+    }
+
+    response = provider_chat_response_from_stream("gpt-4o", chunks)
+
+    assert response.content == "Hello"
+    assert response.finish_reason == "stop"
+    assert response.usage_prompt_tokens == 5
+    assert response.usage_completion_tokens == 7
