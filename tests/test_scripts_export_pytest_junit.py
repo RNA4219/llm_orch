@@ -327,6 +327,46 @@ def test_convert_junit_to_jsonl_handles_default_namespace_fail_and_skip(
     ]
 
 
+def test_convert_junit_to_jsonl_handles_prefixed_namespace_fail_and_skip(
+    tmp_path: Path,
+) -> None:
+    xml_path = tmp_path / "pytest.xml"
+    output_path = tmp_path / "out.jsonl"
+    write_file(
+        xml_path,
+        """
+        <testsuite xmlns:pytest="urn:pytest">
+            <testcase classname="pkg.TestCase" name="test_failure">
+                <pytest:failure message="boom">details</pytest:failure>
+            </testcase>
+            <testcase classname="pkg.TestCase" name="test_skipped">
+                <pytest:skipped message="later">because</pytest:skipped>
+            </testcase>
+        </testsuite>
+        """,
+    )
+
+    convert_junit_to_jsonl(xml_path, output_path)
+
+    records = read_json_lines(output_path)
+    assert records == [
+        {
+            "classname": "pkg.TestCase",
+            "details": "details",
+            "message": "boom",
+            "name": "test_failure",
+            "status": "fail",
+        },
+        {
+            "classname": "pkg.TestCase",
+            "details": "because",
+            "message": "later",
+            "name": "test_skipped",
+            "status": "skip",
+        },
+    ]
+
+
 def test_convert_junit_to_jsonl_normalizes_error_status(tmp_path: Path) -> None:
     xml_path = tmp_path / "pytest.xml"
     output_path = tmp_path / "out.jsonl"
