@@ -40,7 +40,10 @@ jobs:
           fi
       - uses: actions/upload-artifact@v4
         if: always()
-        with: { name: test-logs, path: workflow-cookbook/logs/* }
+        with:
+          name: test-logs
+          path: workflow-cookbook/logs/*
+          overwrite: true
 
   typecheck:
     runs-on: ubuntu-24.04
@@ -70,7 +73,10 @@ jobs:
           fi
       - uses: actions/upload-artifact@v4
         if: always()
-        with: { name: test-logs, path: workflow-cookbook/logs/* }
+        with:
+          name: test-logs
+          path: workflow-cookbook/logs/*
+          overwrite: true
 
   unit:
     runs-on: ubuntu-24.04
@@ -157,7 +163,10 @@ jobs:
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
-        with: { name: test-logs, path: workflow-cookbook/logs/* }
+        with:
+          name: test-logs
+          path: workflow-cookbook/logs/*
+          overwrite: true
 
   build:
     needs: [lint, typecheck, unit]
@@ -194,7 +203,10 @@ jobs:
           if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         if: always()
-        with: { name: test-logs, path: workflow-cookbook/logs/* }
+        with:
+          name: test-logs
+          path: workflow-cookbook/logs/*
+          overwrite: true
 
   e2e:
     needs: [build]
@@ -218,7 +230,10 @@ jobs:
           fi
       - uses: actions/upload-artifact@v4
         if: always()
-        with: { name: test-logs, path: workflow-cookbook/logs/* }
+        with:
+          name: test-logs
+          path: workflow-cookbook/logs/*
+          overwrite: true
 
   report:
     needs: [lint, typecheck, unit, build, e2e]
