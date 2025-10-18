@@ -107,6 +107,34 @@ def test_analyze_main_handles_blank_lines(tmp_path, monkeypatch):
     assert report_path.exists(), "Report file should be generated even with blank lines"
 
 
+def test_analyze_handles_invalid_json_line(tmp_path, monkeypatch):
+    log_path = tmp_path / "logs" / "test.jsonl"
+    report_path = tmp_path / "reports" / "today.md"
+    issue_path = tmp_path / "reports" / "issue_suggestions.md"
+
+    log_path.parent.mkdir(parents=True)
+    report_path.parent.mkdir(parents=True)
+
+    with log_path.open("w", encoding="utf-8") as fp:
+        fp.write(json.dumps({"name": "sample::good_one", "duration_ms": 10, "status": "pass"}) + "\n")
+        fp.write("{bad json" + "\n")
+        fp.write(json.dumps({"name": "sample::good_two", "duration_ms": 30, "status": "fail"}) + "\n")
+
+    monkeypatch.setattr(analyze, "LOG", log_path)
+    monkeypatch.setattr(analyze, "REPORT", report_path)
+    monkeypatch.setattr(analyze, "ISSUE_OUT", issue_path)
+
+    tests, _, fails = analyze.load_results()
+
+    assert tests == ["sample::good_one", "sample::good_two"]
+    assert fails == ["sample::good_two"]
+
+    analyze.main()
+
+    report_text = report_path.read_text(encoding="utf-8")
+    assert "- Total tests: 2" in report_text
+
+
 def test_analyze_main_skip_only_counts_as_not_run(tmp_path, monkeypatch):
     log_path = tmp_path / "logs" / "test.jsonl"
     report_path = tmp_path / "reports" / "today.md"

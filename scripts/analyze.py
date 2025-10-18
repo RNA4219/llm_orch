@@ -37,7 +37,10 @@ def load_results():
             stripped = line.strip()
             if not stripped:
                 continue
-            obj = json.loads(stripped)
+            try:
+                obj = json.loads(stripped)
+            except json.JSONDecodeError:
+                continue
             status_value = None
             for key in _STATUS_KEYS:
                 value = obj.get(key)
