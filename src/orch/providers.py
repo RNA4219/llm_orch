@@ -693,6 +693,12 @@ class OllamaProvider(BaseProvider):
             for key, value in extra_options.items()
             if key not in self._RESERVED_OPTION_KEYS and value is not None
         }
+        if top_p is not None:
+            payload["options"]["top_p"] = top_p
+            if "top_p" in cleaned_options:
+                cleaned_options = {
+                    key: value for key, value in cleaned_options.items() if key != "top_p"
+                }
         if cleaned_options:
             payload["options"].update(cleaned_options)
         async with httpx.AsyncClient(timeout=120) as client:

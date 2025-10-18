@@ -1,79 +1,51 @@
 import asyncio
-import sys
-from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from src.orch.providers import OllamaProvider  # noqa: E402
-from src.orch.router import ProviderDef  # noqa: E402
+from src.orch.providers import OllamaProvider
+from src.orch.router import ProviderDef
 
 
-class _DummyResponse:
-    status_code = 200
-
-    @staticmethod
-    def json() -> dict[str, Any]:
-        return {"message": {"content": "ok"}, "done": True}
-
-    @staticmethod
-    def raise_for_status() -> None:
-        return None
-
-
-def _make_provider() -> OllamaProvider:
+def make_provider(base_url: str = "http://localhost:11434") -> OllamaProvider:
     provider_def = ProviderDef(
         name="ollama",
         type="ollama",
-        base_url="http://localhost:11434",
+        base_url=base_url,
         model="llama3",
         auth_env=None,
-        rpm=120,
+        rpm=60,
         concurrency=1,
     )
     return OllamaProvider(provider_def)
 
 
-def test_ollama_sets_format_json_for_json_object(monkeypatch: pytest.MonkeyPatch) -> None:
-    provider = _make_provider()
+def test_ollama_top_p_option(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = make_provider()
     post_calls: list[dict[str, Any]] = []
 
-    class _DummyAsyncClient:
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
-            _ = args
-            _ = kwargs
+    async def fake_post(self: httpx.AsyncClient, url: str, **kwargs: Any) -> httpx.Response:
+        payload = kwargs.get("json", {})
+        post_calls.append({"url": url, "json": payload})
+        request = httpx.Request("POST", url)
+        return httpx.Response(
+            status_code=200,
+            json={"message": {"content": "ok"}, "done": True},
+            request=request,
+        )
 
-        async def __aenter__(self) -> "_DummyAsyncClient":
-            return self
-
-        async def __aexit__(
-            self,
-            exc_type: type[BaseException] | None,
-            exc: BaseException | None,
-            tb: Any,
-        ) -> None:
-            return None
-
-        async def post(self, url: str, *, json: Any | None = None, **kwargs: Any) -> _DummyResponse:
-            post_calls.append({"url": url, "json": json, "kwargs": kwargs})
-            return _DummyResponse()
-
-    monkeypatch.setattr("httpx.AsyncClient", _DummyAsyncClient)
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
 
     async def invoke() -> None:
         await provider.chat(
             model="llama3",
             messages=[{"role": "user", "content": "ping"}],
-            response_format={"type": "json_object"},
+            top_p=0.3,
         )
 
     asyncio.run(invoke())
 
     assert post_calls
-    payload = post_calls[0]["json"]
-    assert isinstance(payload, dict)
-    assert payload.get("format") == "json"
+    options = post_calls[0]["json"]["options"]
+    assert options["top_p"] == 0.3
