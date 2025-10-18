@@ -23,10 +23,9 @@ def _strip_namespace(tag: str) -> str:
 def convert_junit_to_jsonl(input_path: Path, output_path: Path) -> None:
     tree = ET.parse(input_path)
     root = tree.getroot()
-    records = list(_iter_testcase_records(root))
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as handle:
-        for record in records:
+        for record in _iter_testcase_records(root):
             handle.write(json.dumps(record, ensure_ascii=False))
             handle.write("\n")
 

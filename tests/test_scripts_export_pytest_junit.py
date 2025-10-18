@@ -18,6 +18,39 @@ def read_json_lines(path: Path) -> list[dict[str, object]]:
         return [json.loads(line) for line in handle]
 
 
+def test_convert_junit_to_jsonl_handles_large_suites(tmp_path: Path) -> None:
+    xml_path = tmp_path / "pytest.xml"
+    output_path = tmp_path / "out.jsonl"
+    testcase_count = 50
+    testcase_elements = "\n".join(
+        f'<testcase classname="pkg.TestCase" name="test_{index}" time="{index / 1000:.3f}" />'
+        for index in range(1, testcase_count + 1)
+    )
+    write_file(
+        xml_path,
+        "\n".join(
+            [
+                "<testsuite>",
+                testcase_elements,
+                "</testsuite>",
+            ]
+        ),
+    )
+
+    convert_junit_to_jsonl(xml_path, output_path)
+
+    records = read_json_lines(output_path)
+    assert records == [
+        {
+            "classname": "pkg.TestCase",
+            "duration_ms": index,
+            "name": f"test_{index}",
+            "status": "passed",
+        }
+        for index in range(1, testcase_count + 1)
+    ]
+
+
 def test_convert_junit_to_jsonl_records_duration_ms(tmp_path: Path) -> None:
     xml_path = tmp_path / "pytest.xml"
     output_path = tmp_path / "out.jsonl"
