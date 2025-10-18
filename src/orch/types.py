@@ -60,6 +60,18 @@ class ProviderChatResponse(BaseModel):
     choices: list[ProviderChatChoice] | None = None
 
 
+class ProviderStreamChunk(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    event: str | None = None
+    type: str | None = None
+    status_code: int | None = None
+    model: str | None = None
+    choices: list[dict[str, Any]] | None = None
+    usage: dict[str, int] | None = None
+    error: dict[str, Any] | None = None
+
+
 def chat_response_from_provider(p: ProviderChatResponse) -> dict[str, Any]:
     import time
     import uuid
