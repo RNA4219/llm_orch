@@ -1,23 +1,227 @@
 name: test
 on:
-  push:
-    branches: ["**"]
+  push: { branches: ["**"] }
   pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TZ: UTC
+  LANG: C.UTF-8
+
 jobs:
-  run:
-    runs-on: ubuntu-latest
+  lint:
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      # ★ プロジェクトに合わせて差し替え（ここはダミー出力）
-      - name: Run tests (dummy)
-        run: |
-          mkdir -p logs
-          echo '{"name":"sample::ok","status":"pass","duration_ms":120}' >> logs/test.jsonl
-          echo '{"name":"sample::fail","status":"fail","duration_ms":900}' >> logs/test.jsonl
-      - name: Upload logs
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+      - run: mkdir -p workflow-cookbook/logs
+      - uses: actions/setup-node@v4
         with:
-          name: test-logs
-          path: logs
-          if-no-files-found: warn
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: '**/package-lock.json'
+      - name: ESLint (if exists)
+        run: |
+          set -Eeuo pipefail
+          if [ -f package.json ] && node -e "p=require('./package.json');process.exit(!(p.scripts&&p.scripts.lint))"; then
+            start=$(date +%s%3N)
+            npm ci
+            if npm run -s lint; then s=pass; else s=fail; fi
+            echo "{\"name\":\"lint\",\"status\":\"$s\",\"duration_ms\":$(( $(date +%s%3N)-start ))}" >> workflow-cookbook/logs/test.jsonl
+          else
+            echo "{\"name\":\"lint\",\"status\":\"skip\",\"duration_ms\":0}" >> workflow-cookbook/logs/test.jsonl
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: test-logs, path: workflow-cookbook/logs/* }
+
+  typecheck:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: mkdir -p workflow-cookbook/logs
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: '**/package-lock.json'
+      - name: TypeScript (if exists)
+        run: |
+          set -Eeuo pipefail
+          if [ -f tsconfig.json ]; then
+            start=$(date +%s%3N)
+            npm ci
+            if npx tsc -noEmit; then s=pass; else s=fail; fi
+            echo "{\"name\":\"typecheck\",\"status\":\"$s\",\"duration_ms\":$(( $(date +%s%3N)-start ))}" >> workflow-cookbook/logs/test.jsonl
+          else
+            echo "{\"name\":\"typecheck\",\"status\":\"skip\",\"duration_ms\":0}" >> workflow-cookbook/logs/test.jsonl
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: test-logs, path: workflow-cookbook/logs/* }
+
+  unit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: mkdir -p workflow-cookbook/logs
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: '**/package-lock.json'
+
+      - name: Node unit (repo root)
+        if: ${{ hashFiles('package.json') != '' }}
+        run: |
+          set -Eeuo pipefail
+          start=$(date +%s%3N)
+          npm ci
+          if npm test --silent -- --maxWorkers=2; then s=pass; else s=fail; fi
+          echo "{\"name\":\"node::root\",\"status\":\"$s\",\"duration_ms\":$(( $(date +%s%3N)-start ))}" >> workflow-cookbook/logs/test.jsonl
+
+      - name: Node unit (frontend/)
+        if: ${{ hashFiles('frontend/package.json') != '' }}
+        working-directory: frontend
+        run: |
+          set -Eeuo pipefail
+          start=$(date +%s%3N)
+          npm ci
+          if npm test --silent -- --maxWorkers=2; then s=pass; else s=fail; fi
+          echo "{\"name\":\"node::frontend\",\"status\":\"$s\",\"duration_ms\":$(( $(date +%s%3N)-start ))}" >> ../workflow-cookbook/logs/test.jsonl
+
+      - name: Node unit (packages/*)
+        if: ${{ hashFiles('packages/*/package.json') != '' }}
+        run: |
+          set -Eeuo pipefail
+          shopt -s nullglob
+          for PKG in packages/*; do
+            if [ -f "$PKG/package.json" ]; then
+              pushd "$PKG" >/dev/null
+              start=$(date +%s%3N)
+              npm ci
+              if npm test --silent -- --maxWorkers=2; then s=pass; else s=fail; fi
+              popd >/dev/null
+              echo "{\"name\":\"node::${PKG}\",\"status\":\"$s\",\"duration_ms\":$(( $(date +%s%3N)-start ))}" >> workflow-cookbook/logs/test.jsonl
+            fi
+          done
+          shopt -u nullglob
+
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+
+      - name: Pytest (repo root)
+        if: ${{ hashFiles('pyproject.toml') != '' || hashFiles('requirements*.txt') != '' || hashFiles('requirements/*.txt') != '' }}
+        run: |
+          set -Eeuo pipefail
+          pip install -U pip wheel || true
+          pip install -r requirements.txt 2>/dev/null || true
+          pip install -r requirements/dev.txt 2>/dev/null || true
+          pip install pytest || true
+          start=$(date +%s%3N)
+          if pytest -q; then s=pass; else s=fail; fi
+          echo "{\"name\":\"python::root\",\"status\":\"$s\",\"duration_ms\":$(( $(date +%s%3N)-start ))}" >> workflow-cookbook/logs/test.jsonl
+
+      - name: Pytest (backend/)
+        if: ${{ hashFiles('backend/pyproject.toml') != '' || hashFiles('backend/requirements*.txt') != '' }}
+        working-directory: backend
+        run: |
+          set -Eeuo pipefail
+          pip install -U pip wheel || true
+          pip install -r requirements.txt 2>/dev/null || true
+          pip install -r requirements/dev.txt 2>/dev/null || true
+          pip install pytest || true
+          start=$(date +%s%3N)
+          if pytest -q; then s=pass; else s=fail; fi
+          echo "{\"name\":\"python::backend\",\"status\":\"$s\",\"duration_ms\":$(( $(date +%s%3N)-start ))}" >> ../workflow-cookbook/logs/test.jsonl
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: test-logs, path: workflow-cookbook/logs/* }
+
+  build:
+    needs: [lint, typecheck, unit]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: mkdir -p workflow-cookbook/logs dist
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: '**/package-lock.json'
+      - name: Build (if exists)
+        run: |
+          set -Eeuo pipefail
+          if [ -f package.json ] && node -e "p=require('./package.json');process.exit(!(p.scripts&&p.scripts.build))"; then
+            start=$(date +%s%3N)
+            npm ci
+            if npm run -s build; then s=pass; else s=fail; fi
+            echo "{\"name\":\"build\",\"status\":\"$s\",\"duration_ms\":$(( $(date +%s%3N)-start ))}" >> workflow-cookbook/logs/test.jsonl
+          else
+            echo "{\"name\":\"build\",\"status\":\"skip\",\"duration_ms\":0}" >> workflow-cookbook/logs/test.jsonl
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-output
+          path: dist/**
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: test-logs, path: workflow-cookbook/logs/* }
+
+  e2e:
+    needs: [build]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: mkdir -p workflow-cookbook/logs
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - name: Playwright E2E (if exists)
+        run: |
+          set -Eeuo pipefail
+          if [ -f package.json ] && node -e "p=require('./package.json');process.exit(!(p.scripts&&p.scripts['test:e2e']))"; then
+            echo "{\"name\":\"e2e\",\"status\":\"skip\",\"duration_ms\":0}" >> workflow-cookbook/logs/test.jsonl
+          else
+            start=$(date +%s%3N)
+            npm ci
+            npx playwright install --with-deps
+            if npm run -s test:e2e; then s=pass; else s=fail; fi
+            echo "{\"name\":\"e2e\",\"status\":\"$s\",\"duration_ms\":$(( $(date +%s%3N)-start ))}" >> workflow-cookbook/logs/test.jsonl
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: test-logs, path: workflow-cookbook/logs/* }
+
+  report:
+    needs: [lint, typecheck, unit, build, e2e]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: test-logs, path: . }
+      - name: Summarize & STRICT gate (optional)
+        run: |
+          set -Eeuo pipefail
+          # 可能性のあるファイル名に対応
+          src=""
+          [ -f test.jsonl ] && src="test.jsonl"
+          [ -z "$src" ] && [ -f logs/test.jsonl ] && src="logs/test.jsonl"
+          if [ -z "$src" ]; then src=$(ls -1 **/test.jsonl | head -n1 || true); fi
+          if [ -z "$src" ]; then echo "No JSONL found"; exit 0; fi
+
+          echo "=== CI Summary (raw JSONL) ==="
+          cat "$src" || true
+
+          fails=$(grep -c '"status":"fail"' "$src" || true)
+          echo "Fail count: $fails"
+
+          if [ "${CI_STRICT:-}" = "true" ] && [ "$fails" -gt 0 ]; then
+            echo "STRICT mode: failing due to failed statuses."
+            exit 1
+          fi
