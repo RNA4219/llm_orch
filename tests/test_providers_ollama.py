@@ -49,3 +49,33 @@ def test_ollama_top_p_option(monkeypatch: pytest.MonkeyPatch) -> None:
     assert post_calls
     options = post_calls[0]["json"]["options"]
     assert options["top_p"] == 0.3
+
+
+def test_ollama_response_format_json_sets_format(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = make_provider()
+    post_calls: list[dict[str, Any]] = []
+
+    async def fake_post(self: httpx.AsyncClient, url: str, **kwargs: Any) -> httpx.Response:
+        payload = kwargs.get("json", {})
+        post_calls.append({"url": url, "json": payload})
+        request = httpx.Request("POST", url)
+        return httpx.Response(
+            status_code=200,
+            json={"message": {"content": "ok"}, "done": True},
+            request=request,
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    async def invoke() -> None:
+        await provider.chat(
+            model="llama3",
+            messages=[{"role": "user", "content": "ping"}],
+            response_format={"type": "json_object"},
+        )
+
+    asyncio.run(invoke())
+
+    assert post_calls
+    payload = post_calls[0]["json"]
+    assert payload.get("format") == "json"
