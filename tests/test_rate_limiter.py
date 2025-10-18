@@ -164,6 +164,36 @@ async def test_guard_record_usage_wait_time(monkeypatch: pytest.MonkeyPatch) -> 
   assert wait == pytest.approx(60.0)
 
 
+@pytest.mark.anyio
+async def test_guard_cancels_reservation_when_unused(
+  monkeypatch: pytest.MonkeyPatch, anyio_backend: str
+) -> None:
+  _ = anyio_backend
+  fake_time = 0.0
+  sleeps: list[float] = []
+
+  async def fake_sleep(delay: float) -> None:
+    sleeps.append(delay)
+    nonlocal fake_time
+    fake_time += delay
+
+  def fake_time_func() -> float:
+    return fake_time
+
+  monkeypatch.setattr(rate_limiter.time, "time", fake_time_func)
+  monkeypatch.setattr(rate_limiter.asyncio, "sleep", fake_sleep)
+
+  guard = Guard(rpm=100, concurrency=1, tpm=100)
+
+  async with guard.acquire(estimated_prompt_tokens=80):
+    pass
+
+  async with guard.acquire(estimated_prompt_tokens=80):
+    pass
+
+  assert sleeps == []
+
+
 def test_provider_guards_passes_tpm(monkeypatch: pytest.MonkeyPatch) -> None:
   created: list[tuple[int, int, int | None]] = []
 

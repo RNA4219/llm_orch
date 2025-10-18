@@ -30,6 +30,7 @@ class GuardLease:
   reservation_id: int | None
   estimated_prompt_tokens: int
   acquired_at: float
+  committed: bool = False
 
 
 @dataclass
@@ -185,7 +186,9 @@ class Guard:
     stack = self._leases.get(task)
     if not stack:
       raise RuntimeError("guard context release mismatch")
-    stack.pop()
+    lease = stack.pop()
+    if self._tpm_bucket is not None and not lease.committed:
+      self._tpm_bucket.cancel(lease.reservation_id, time.time())
     if not stack:
       self._leases.pop(task, None)
     self.sem.release()
@@ -202,7 +205,10 @@ class Guard:
     total = max(0, usage_prompt_tokens) + max(0, usage_completion_tokens)
     reservation_id = lease.reservation_id if lease is not None else None
     now = time.time()
-    return self._tpm_bucket.commit(reservation_id, total, now)
+    wait = self._tpm_bucket.commit(reservation_id, total, now)
+    if lease is not None:
+      lease.committed = True
+    return wait
 
 
 class _GuardContext:
