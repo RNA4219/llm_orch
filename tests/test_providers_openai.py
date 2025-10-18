@@ -21,7 +21,7 @@ from src.orch.types import (
 )  # noqa: E402
 
 
-class ProviderStreamChunk(TypedDict, total=False):
+class ProviderStreamChunkDict(TypedDict, total=False):
     index: int
     delta: dict[str, Any]
     finish_reason: str | None
@@ -352,7 +352,7 @@ def test_openai_chat_response_uses_requested_model_when_missing(monkeypatch: pyt
 
 
 class FakeOpenAIStreamClient:
-    def __init__(self, chunks: list[ProviderStreamChunk], *, error: Exception | None = None) -> None:
+    def __init__(self, chunks: list[ProviderStreamChunkDict], *, error: Exception | None = None) -> None:
         self._chunks = chunks
         self._error = error
         self.calls: list[dict[str, Any]] = []
@@ -363,7 +363,7 @@ class FakeOpenAIStreamClient:
         model: str,
         messages: list[dict[str, Any]],
         stop_event: asyncio.Event | None = None,
-    ) -> AsyncGenerator[ProviderStreamChunk, None]:
+    ) -> AsyncGenerator[ProviderStreamChunkDict, None]:
         self.calls.append({"model": model, "messages": messages, "stop_event": stop_event})
         if self._error is not None:
             if stop_event is not None:
@@ -379,7 +379,7 @@ class FakeOpenAIStreamClient:
 async def test_openai_stream_chat_emits_expected_deltas(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "secret")
     provider = make_provider("https://api.openai.com")
-    expected_chunks: list[ProviderStreamChunk] = [
+    expected_chunks: list[ProviderStreamChunkDict] = [
         {"index": 0, "delta": {"role": "assistant"}},
         {"index": 0, "delta": {"content": "hel"}},
         {"index": 0, "delta": {"content": "lo"}},
@@ -389,8 +389,8 @@ async def test_openai_stream_chat_emits_expected_deltas(monkeypatch: pytest.Monk
     monkeypatch.setattr(provider, "_openai_client", fake_client, raising=False)
     stop_event = asyncio.Event()
 
-    async def collect() -> list[ProviderStreamChunk]:
-        results: list[ProviderStreamChunk] = []
+    async def collect() -> list[ProviderStreamChunkDict]:
+        results: list[ProviderStreamChunkDict] = []
         async for chunk in provider.stream_chat(  # type: ignore[attr-defined]
             model="gpt-4o",
             messages=[{"role": "user", "content": "hello"}],
