@@ -78,7 +78,10 @@ def _build_record(testcase: ET.Element) -> dict[str, object]:
         record["duration_ms"] = duration_ms
 
     for tag, status in _STATUS_TAGS.items():
-        element = testcase.find(tag)
+        element = next(
+            (child for child in testcase if _strip_namespace(child.tag) == tag),
+            None,
+        )
         if element is not None:
             record["status"] = status
             message = element.attrib.get("message")
