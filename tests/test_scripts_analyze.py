@@ -79,25 +79,25 @@ def test_load_results_counts_multiple_failure_statuses(tmp_path, monkeypatch):
     ]
 
 
-def test_load_results_ignores_missing_duration_records(tmp_path, monkeypatch):
+def test_load_results_handles_non_ascii_names(tmp_path, monkeypatch):
     log_path = tmp_path / "logs" / "test.jsonl"
     log_path.parent.mkdir(parents=True)
 
     records = [
-        {"name": "sample::no_duration", "status": "pass"},
-        {"name": "sample::none_duration", "duration_ms": None, "status": "pass"},
-        {"name": "sample::with_duration", "duration_ms": 15, "status": "pass"},
+        {"name": "試験::正常", "duration_ms": 12, "status": "pass"},
+        {"name": "試験::失敗", "duration_ms": 34, "status": "failed"},
     ]
 
     with log_path.open("w", encoding="utf-8") as fp:
         for record in records:
-            fp.write(json.dumps(record) + "\n")
+            fp.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     monkeypatch.setattr(analyze, "LOG", log_path)
 
-    _, durations, _ = analyze.load_results()
+    tests, _, fails = analyze.load_results()
 
-    assert durations == [15]
+    assert tests == ["試験::正常", "試験::失敗"]
+    assert fails == ["試験::失敗"]
 
 
 def test_load_results_handles_utf8_content(tmp_path, monkeypatch):

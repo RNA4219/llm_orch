@@ -32,7 +32,7 @@ def load_results():
     tests, durs, fails = [], [], []
     if not LOG.exists():
         return tests, durs, fails
-    with LOG.open(encoding="utf-8") as f:
+    with LOG.open(encoding="utf-8", errors="strict") as f:
         for line in f:
             stripped = line.strip()
             if not stripped:
