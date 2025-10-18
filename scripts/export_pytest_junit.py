@@ -15,9 +15,10 @@ _STATUS_TAGS: dict[str, str] = {
 
 
 def _strip_namespace(tag: str) -> str:
-    if "}" in tag:
-        return tag.split("}", 1)[1]
-    return tag
+    """Return the local tag name without any XML namespace prefix."""
+    if "}" not in tag:
+        return tag
+    return tag.split("}", 1)[1]
 
 
 def convert_junit_to_jsonl(input_path: Path, output_path: Path) -> None:
