@@ -285,6 +285,83 @@ def test_chat_records_planner_failure_on_guarded_errors(
         assert fake_planner.record_failure_calls == ["dummy"]
 
 
+@pytest.mark.parametrize(
+    "exception_factory, expected_status",
+    [
+        (
+            lambda: httpx.HTTPStatusError(
+                "429",
+                request=httpx.Request("POST", "https://dummy.test"),
+                response=httpx.Response(429, request=httpx.Request("POST", "https://dummy.test")),
+            ),
+            429,
+        ),
+        (lambda: RuntimeError("boom"), 502),
+    ],
+)
+def test_chat_releases_guard_usage_on_provider_exception(
+    route_test_config: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    exception_factory: Callable[[], Exception],
+    expected_status: int,
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+
+    from src.orch.rate_limiter import Guard, GuardLease
+
+    class TrackingGuard(Guard):
+        def __init__(self) -> None:
+            super().__init__(rpm=60, concurrency=1, tpm=128)
+            self.record_usage_calls: list[tuple[int, int]] = []
+
+        def record_usage(
+            self,
+            lease: GuardLease | None,
+            *,
+            usage_prompt_tokens: int,
+            usage_completion_tokens: int,
+        ) -> float:
+            self.record_usage_calls.append((usage_prompt_tokens, usage_completion_tokens))
+            return super().record_usage(
+                lease, usage_prompt_tokens=usage_prompt_tokens, usage_completion_tokens=usage_completion_tokens
+            )
+
+    tracking_guard = TrackingGuard()
+
+    class MockProviderGuards:
+        def get(self, name: str) -> Guard:
+            assert name == "dummy"
+            return tracking_guard
+
+    monkeypatch.setattr(server_module, "guards", MockProviderGuards(), raising=False)
+    monkeypatch.setattr(server_module, "MAX_PROVIDER_ATTEMPTS", 1)
+
+    class MockProvider:
+        model = "dummy"
+
+        async def chat(self, *args: object, **kwargs: object) -> object:
+            raise exception_factory()
+
+    monkeypatch.setitem(server_module.providers.providers, "dummy", MockProvider())
+
+    client = TestClient(app)
+    messages = [{"role": "user", "content": "Hello"}]
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "dummy", "messages": messages, "max_tokens": 32},
+    )
+
+    assert response.status_code == expected_status
+    assert tracking_guard.record_usage_calls
+    for usage_prompt, usage_completion in tracking_guard.record_usage_calls:
+        assert usage_prompt == 0
+        assert usage_completion == 0
+    bucket = tracking_guard._tpm_bucket
+    assert bucket is not None
+    assert bucket._total == 0
+
+
 def assert_single_req_id(records: list[dict[str, object]]) -> None:
     assert records
     req_ids = {record.get("req_id") for record in records}
