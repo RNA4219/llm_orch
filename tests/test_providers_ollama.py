@@ -1,11 +1,17 @@
 import asyncio
+import sys
+from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 
-from src.orch.providers import OllamaProvider
-from src.orch.router import ProviderDef
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.orch.providers import OllamaProvider  # noqa: E402
+from src.orch.router import ProviderDef  # noqa: E402
 
 
 def make_provider(base_url: str = "http://localhost:11434") -> OllamaProvider:

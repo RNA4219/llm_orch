@@ -674,11 +674,12 @@ class OllamaProvider(BaseProvider):
         _ = tools
         _ = tool_choice
         _ = function_call
+        options: dict[str, Any] = {"temperature": temperature, "num_predict": max_tokens}
         payload = {
             "model": self.defn.model or model,
             "messages": messages,
             "stream": False,
-            "options": {"temperature": temperature, "num_predict": max_tokens},
+            "options": options,
         }
         if response_format is not None:
             format_type = response_format.get("type")
@@ -688,19 +689,16 @@ class OllamaProvider(BaseProvider):
                 raise ValueError(
                     "OllamaProvider only supports response_format type 'json_object'."
                 )
-        cleaned_options = {
+        cleaned_options: dict[str, Any] = {
             key: value
             for key, value in extra_options.items()
             if key not in self._RESERVED_OPTION_KEYS and value is not None
         }
         if top_p is not None:
-            payload["options"]["top_p"] = top_p
-            if "top_p" in cleaned_options:
-                cleaned_options = {
-                    key: value for key, value in cleaned_options.items() if key != "top_p"
-                }
+            options["top_p"] = top_p
+            cleaned_options.pop("top_p", None)
         if cleaned_options:
-            payload["options"].update(cleaned_options)
+            options.update(cleaned_options)
         async with httpx.AsyncClient(timeout=120) as client:
             r = await client.post(url, json=payload)
             r.raise_for_status()
