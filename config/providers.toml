@@ -6,6 +6,7 @@ model = "gpt-4.1-mini"
 auth_env = "OPENAI_API_KEY"
 rpm = 120
 concurrency = 8
+tpm = 60000
 
 [frontier_backup]
 type = "anthropic"
@@ -14,6 +15,7 @@ model = "claude-3-5-sonnet-20241022"
 auth_env = "ANTHROPIC_API_KEY"
 rpm = 60
 concurrency = 6
+tpm = 60000
 
 [hosted_fast]
 type = "openai" # GroqはOpenAI互換エンドポイントで利用可
@@ -22,6 +24,7 @@ model = "llama-3.1-8b-instruct"
 auth_env = "GROQ_API_KEY"
 rpm = 120
 concurrency = 16
+tpm = 90000
 
 [local_7b]
 type = "ollama"
@@ -29,3 +32,4 @@ base_url = "http://127.0.0.1:11434"
 model = "qwen2.5:7b-instruct-q4_K_M"
 rpm = 9999
 concurrency = 4
+tpm = 120000

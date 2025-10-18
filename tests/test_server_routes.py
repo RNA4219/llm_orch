@@ -46,6 +46,7 @@ model = "dummy"
 base_url = ""
 rpm = 60
 concurrency = 1
+tpm = 6000
 """.strip()
     )
     router_file = tmp_path / "router.yaml"
@@ -74,6 +75,214 @@ def capture_metric_records(
 
     monkeypatch.setattr(server_module.metrics, "write", capture)
     return records
+
+
+def test_chat_uses_guard_estimates_and_records_usage(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+
+    from src.orch.types import ProviderChatResponse
+
+    class FakeGuard:
+        def __init__(self) -> None:
+            self.acquire_calls: list[int] = []
+            self.record_usage_calls: list[tuple[object, int, int]] = []
+            self._lease = object()
+
+        def acquire(self, *, estimated_prompt_tokens: int):
+            self.acquire_calls.append(estimated_prompt_tokens)
+            lease = self._lease
+
+            class FakeGuardContext:
+                async def __aenter__(self_nonlocal) -> object:
+                    return lease
+
+                async def __aexit__(self_nonlocal, exc_type, exc, tb) -> None:
+                    return None
+
+            return FakeGuardContext()
+
+        def record_usage(
+            self,
+            lease: object,
+            *,
+            usage_prompt_tokens: int,
+            usage_completion_tokens: int,
+        ) -> float:
+            self.record_usage_calls.append((lease, usage_prompt_tokens, usage_completion_tokens))
+            return 0.0
+
+    class FakePlanner:
+        def __init__(self) -> None:
+            self.plan_calls: list[str] = []
+            self.record_success_calls: list[str] = []
+            self.record_failure_calls: list[str] = []
+
+        def plan(self, task: str):
+            self.plan_calls.append(task)
+
+            class _Route:
+                primary = "dummy"
+                fallback: list[str] = []
+
+            return _Route()
+
+        def record_success(self, provider: str) -> None:
+            self.record_success_calls.append(provider)
+
+        def record_failure(self, provider: str, *, now: float | None = None) -> None:
+            self.record_failure_calls.append(provider)
+
+    fake_guard = FakeGuard()
+    fake_planner = FakePlanner()
+    monkeypatch.setattr(server_module, "guards", type("_Guards", (), {"get": lambda self, name: fake_guard})())
+    monkeypatch.setattr(server_module, "planner", fake_planner, raising=False)
+
+    provider_chat = AsyncMock(
+        return_value=ProviderChatResponse(
+            status_code=200,
+            model="dummy",
+            content="ok",
+            usage_prompt_tokens=42,
+            usage_completion_tokens=11,
+        )
+    )
+
+    class MockProvider:
+        model = "dummy"
+
+        def __init__(self) -> None:
+            self.chat = provider_chat
+
+    monkeypatch.setitem(server_module.providers.providers, "dummy", MockProvider())
+
+    client = TestClient(app)
+    messages = [
+        {"role": "system", "content": "You are concise."},
+        {"role": "user", "content": "Explain."},
+    ]
+    body = {
+        "model": "dummy",
+        "messages": messages,
+        "max_tokens": 128,
+    }
+    expected_estimate = server_module._estimate_prompt_tokens(messages, body["max_tokens"])
+
+    response = client.post("/v1/chat/completions", json=body)
+
+    assert response.status_code == 200
+    assert fake_guard.acquire_calls == [expected_estimate]
+    assert fake_guard.record_usage_calls
+    lease, usage_prompt, usage_completion = fake_guard.record_usage_calls[0]
+    assert usage_prompt == 42
+    assert usage_completion == 11
+    assert fake_planner.record_success_calls == ["dummy"]
+    assert fake_planner.record_failure_calls == []
+
+
+@pytest.mark.parametrize(
+    "exception_factory, expected_status",
+    [
+        (
+            lambda: httpx.HTTPStatusError(
+                "429",
+                request=httpx.Request("POST", "https://dummy.test"),
+                response=httpx.Response(429, request=httpx.Request("POST", "https://dummy.test")),
+            ),
+            429,
+        ),
+        (lambda: RuntimeError("boom"), 502),
+    ],
+)
+def test_chat_records_planner_failure_on_guarded_errors(
+    route_test_config: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    exception_factory: Callable[[], Exception],
+    expected_status: int,
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+
+    class FakeGuard:
+        def __init__(self) -> None:
+            self.acquire_calls: list[int] = []
+            self.record_usage_calls: list[tuple[object, int, int]] = []
+
+        def acquire(self, *, estimated_prompt_tokens: int):
+            self.acquire_calls.append(estimated_prompt_tokens)
+            lease = object()
+
+            class _Context:
+                async def __aenter__(self_inner) -> object:
+                    return lease
+
+                async def __aexit__(self_inner, exc_type, exc, tb) -> None:
+                    return None
+
+            return _Context()
+
+        def record_usage(
+            self,
+            lease: object,
+            *,
+            usage_prompt_tokens: int,
+            usage_completion_tokens: int,
+        ) -> float:
+            self.record_usage_calls.append((lease, usage_prompt_tokens, usage_completion_tokens))
+            return 0.0
+
+    class FakePlanner:
+        def __init__(self) -> None:
+            self.record_success_calls: list[str] = []
+            self.record_failure_calls: list[str] = []
+
+        def plan(self, task: str):
+
+            class _Route:
+                primary = "dummy"
+                fallback: list[str] = []
+
+            return _Route()
+
+        def record_success(self, provider: str) -> None:
+            self.record_success_calls.append(provider)
+
+        def record_failure(self, provider: str, *, now: float | None = None) -> None:
+            self.record_failure_calls.append(provider)
+
+    fake_guard = FakeGuard()
+    fake_planner = FakePlanner()
+    monkeypatch.setattr(server_module, "guards", type("_Guards", (), {"get": lambda self, name: fake_guard})())
+    monkeypatch.setattr(server_module, "planner", fake_planner, raising=False)
+
+    class MockProvider:
+        model = "dummy"
+
+        async def chat(self, *args: object, **kwargs: object) -> object:
+            raise exception_factory()
+
+    monkeypatch.setitem(server_module.providers.providers, "dummy", MockProvider())
+
+    client = TestClient(app)
+    messages = [{"role": "user", "content": "Hello"}]
+    body = {"model": "dummy", "messages": messages, "max_tokens": 32}
+    expected_estimate = server_module._estimate_prompt_tokens(messages, body["max_tokens"])
+
+    response = client.post("/v1/chat/completions", json=body)
+
+    assert response.status_code == expected_status
+    assert fake_guard.acquire_calls
+    assert all(call == expected_estimate for call in fake_guard.acquire_calls)
+    if expected_status == 429:
+        assert fake_guard.acquire_calls == [expected_estimate]
+    assert fake_guard.record_usage_calls == []
+    assert fake_planner.record_success_calls == []
+    assert fake_planner.record_failure_calls
+    assert all(name == "dummy" for name in fake_planner.record_failure_calls)
+    if expected_status == 429:
+        assert fake_planner.record_failure_calls == ["dummy"]
 
 
 def assert_single_req_id(records: list[dict[str, object]]) -> None:

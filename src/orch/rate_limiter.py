@@ -219,7 +219,9 @@ class _GuardContext:
 
 class ProviderGuards:
   def __init__(self, providers: Dict[str, ProviderDef]):
-    self.guards: Dict[str, Guard] = {name: Guard(p.rpm, p.concurrency) for name, p in providers.items()}
+    self.guards: Dict[str, Guard] = {
+      name: Guard(p.rpm, p.concurrency, p.tpm) for name, p in providers.items()
+    }
 
   def get(self, name: str) -> Guard:
     return self.guards[name]
