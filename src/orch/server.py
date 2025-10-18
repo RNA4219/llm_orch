@@ -379,6 +379,11 @@ async def chat_completions(req: Request, body: ChatRequest):
                         **provider_kwargs,
                     )
                 except Exception as exc:
+                    guard.record_usage(
+                        lease,
+                        usage_prompt_tokens=0,
+                        usage_completion_tokens=0,
+                    )
                     planner.record_failure(provider_name)
                     last_err = str(exc)
                     last_provider = provider_name
