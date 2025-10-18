@@ -4,30 +4,36 @@
 - server.py: FastAPIエンドポイント `/healthz` `/v1/chat/completions`。ルート解決・再試行・フォールバック・メトリクス記録のオーケストレーション。
 - router.py: `providers.toml` / `router.yaml` 読み込み、`RoutePlanner.plan(task)` でルート解決。
 - providers.py: 各プロバイダ（OpenAI互換/Anthropic/Ollama/Dummy）。`ProviderRegistry.get(name)`。
-- rate_limiter.py: Providerごとの TokenBucket + Semaphore。`Guard` で `async with` 制御。
-- metrics.py: JSONLロガー。日付別ファイルへappend。
+- rate_limiter.py: Providerごとの TokenBucket + Semaphore に加え、TPMスライディングウィンドウでトークン消費を追跡。
+- stream_adapter.py: プロバイダ固有のレスポンスをSSE互換チャンクへ再構成し、フォールバック通知と完了イベントを仲介。
+- metrics.py: JSONLロガーとPrometheus/OTelエクスポータ。リクエスト/プロバイダ単位のメトリクスを発行。
 - types.py: Pydanticモデル（ChatRequestなど）とOpenAI互換応答ビルダ。
 
 ## 2. シーケンス
 1. `POST /v1/chat/completions` を受信。
 2. `x-orch-task-kind` → `RoutePlanner.plan(task)`。
-3. primary → fallback 順で:
-   - `Guard` でRPM/並列を確保 → `provider.chat(...)` 実行。
-   - 例外/429/5xx → バックオフして再試行。失敗なら次へ。
-4. 成功でOpenAI互換レスポンスを返却。メトリクスをJSONLへ出力。
+3. 候補ルートごとに `Guard` でRPM/TPM/並列のリソース確保。
+4. `stream` フラグでフローが分岐:
+   - `stream: true`
+     1. `provider.stream_chat(...)` からのイベントを `StreamAdapter` がチャンク化しSSEで送出。
+     2. プロバイダ失敗時は即座にフェイルオーバ通知チャンクを送信し、次候補へスイッチ。
+     3. 成功完了後にメトリクス（Prometheus/OTel + JSONL）を送出し、`[DONE]` を返却。
+   - 非ストリーム
+     1. `provider.chat(...)` でレスポンスを獲得後にチャンク化不要のため即ボディを構築。
+     2. エラー時はリトライ/フェイルオーバを内部で完遂してから応答を返却。
+     3. レスポンス組み立て後にメトリクスを送出し、OpenAI互換JSONを返却。
 5. 全滅で 502。
 
 ## 3. エラー方針
 - `httpx` 例外・タイムアウト・非2xxは capture。`last_err` として保持。
 - リトライは軽いジッター付き（例: 0.25s, 0.5s, 0.75s, ... 上限2s）。
 
-## 4. 設計の根拠
-- OpenAI互換: 既存クライアントの差し替えを最小化。
-- TokenBucket+Semaphore: RPMと並列の直感的運用。TPMは後続拡張。
-- JSONLメトリクス: 軽量・追記のみでツールに取り込みやすい。
-
-## 5. 制約
-- SSE非対応（MVP）。Anthropic特有のメッセージ構造差異は簡易吸収のみ。
+## 4. 制約と設計根拠
+- OpenAI互換APIとSSE: 既存クライアントの差し替えを最小化しつつ、ストリーム/非ストリーム双方を同一エンドポイントで提供。
+- TPMスライディングウィンドウ: プロバイダ仕様に合わせた分単位のトークン消費制御で、突発的な負荷集中を緩和。
+- OpenTelemetry/Prometheus: オペレーション統合のためにOTelメトリクス/トレースを第一級とし、Prometheusエクスポータを併設して従来運用と接続。
+- JSONLメトリクス: 履歴監査とローカル検証を低コストで実現する補助チャネル。
+- Anthropic等プロバイダ差異はStreamAdapterで統一フォーマットへ吸収。完全互換を保証しない。
 
 ## 6. 推奨ディレクトリ構成
 ```
