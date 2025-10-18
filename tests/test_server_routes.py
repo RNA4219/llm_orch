@@ -331,6 +331,50 @@ def test_chat_streams_events(
     assert "\"delta\"" in body
     assert "data: [DONE]" in body
 
+
+def test_chat_streams_provider_chunk_events(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+
+    from src.orch.types import ProviderStreamChoice, ProviderStreamChunk
+
+    async def stream_chat(*_: object, **__: object):
+        yield ProviderStreamChunk(
+            choices=[
+                ProviderStreamChoice(
+                    delta={"content": "hello"},
+                )
+            ]
+        )
+
+    class MockProvider:
+        model = "dummy"
+
+        async def chat_stream(self, *args: object, **kwargs: object):
+            async for item in stream_chat(*args, **kwargs):
+                yield item
+
+    monkeypatch.setitem(
+        server_module.providers.providers, "dummy", MockProvider()
+    )
+
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "dummy",
+            "messages": [{"role": "user", "content": "hi"}],
+            "stream": True,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.text
+    assert "data: {\"choices\":" in body
+    assert "data: [DONE]" in body
+
 def test_chat_accepts_tool_role_messages(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

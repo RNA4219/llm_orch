@@ -4,6 +4,7 @@ import os
 import time
 import uuid
 from collections import defaultdict
+from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any
@@ -520,6 +521,15 @@ async def _stream_chat_response(
             data_field = raw_event
         if not isinstance(event_name, str):
             event_name = None
+        if data_field is not None and not isinstance(data_field, str):
+            model_dump = getattr(data_field, "model_dump", None)
+            if callable(model_dump):
+                try:
+                    data_field = model_dump(mode="json", exclude_none=True)
+                except TypeError:
+                    data_field = model_dump()
+            elif is_dataclass(data_field):
+                data_field = asdict(data_field)
         if isinstance(data_field, str):
             data_text = data_field
         elif data_field is None:
