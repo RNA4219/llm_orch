@@ -623,10 +623,47 @@ async def _stream_chat_response(
             event_name = raw_event.get("event")
             data_field = raw_event.get("data")
         else:
-            event_name = None
+            event_name = getattr(raw_event, "event_type", None)
             data_field = raw_event
+
         if not isinstance(event_name, str):
             event_name = None
+        else:
+            event_name = event_name.strip() or None
+
+        def _map_event(name: str | None) -> tuple[str | None, bool]:
+            if not name:
+                return None, False
+            if name in {"chat.completion.chunk", "telemetry.usage", "done"}:
+                return name, name == "done"
+            lowered = name.lower()
+            if lowered in {"usage"} or lowered.endswith(".usage"):
+                return "telemetry.usage", False
+            if lowered in {
+                "message_stop",
+                "response.stop",
+                "response_completed",
+                "response.completed",
+                "stop",
+                "done",
+            } or lowered.endswith("_stop") or lowered.endswith(".stop"):
+                return "done", True
+            if lowered in {
+                "chunk",
+                "delta",
+                "message",
+                "message_start",
+                "message_delta",
+                "content_block_start",
+                "content_block_delta",
+                "content_block_stop",
+                "response",
+            } or lowered.endswith("_delta") or lowered.endswith("_start") or lowered.endswith("_chunk") or lowered.endswith(".delta") or lowered.endswith(".chunk"):
+                return "chat.completion.chunk", False
+            return name, False
+
+        mapped_event, is_terminal = _map_event(event_name)
+
         if data_field is not None and not isinstance(data_field, str):
             model_dump = getattr(data_field, "model_dump", None)
             if callable(model_dump):
@@ -636,15 +673,24 @@ async def _stream_chat_response(
                     data_field = model_dump()
             elif is_dataclass(data_field):
                 data_field = asdict(data_field)
+
+        if isinstance(data_field, dict):
+            data_field.pop("event_type", None)
+            data_field.pop("raw", None)
+
+        if is_terminal:
+            data_field = {}
+
         if isinstance(data_field, str):
             data_text = data_field
         elif data_field is None:
             data_text = ""
         else:
             data_text = json.dumps(data_field)
+
         lines = []
-        if event_name:
-            lines.append(f"event: {event_name}")
+        if mapped_event:
+            lines.append(f"event: {mapped_event}")
         lines.append(f"data: {data_text}")
         return ("\n".join(lines) + "\n\n").encode("utf-8")
 
