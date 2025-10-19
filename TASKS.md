@@ -5,3 +5,4 @@
 - [x] tests/test_server_config_reload.py: plannerのリロード判定テストを追加済み。重複する検証ケースの再追加を避けること。
 - [x] README: 既知の制限節を `_config_refresh_loop` / `reload_configuration()` の自動監視・反映説明に更新済み。今後の追記でもホットリロード対応済みである点を保持すること。
 - [x] docs/birdseye: rate_limiterノード追加とcaps整備（担当: gpt-5-codex、完了）。
+- [x] docs/birdseye: rate_limiterカプセル要約を刷新し index の generated_at を更新（担当: gpt-5-codex、2025-10-19 完了）。
