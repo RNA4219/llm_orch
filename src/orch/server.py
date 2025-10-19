@@ -858,12 +858,23 @@ async def _stream_chat_response(
             )
         if first_kind == "fallback":
             await producer_task
+            status_code = int(first_payload["status"])
+            message = str(first_payload.get("message") or "provider error")
+            retry_after = first_payload.get("retry_after")
+            await _write_metrics(
+                ok=False,
+                status=status_code,
+                latency_ms=int((time.perf_counter() - start) * 1000),
+                retries=attempts - 1,
+                error=message,
+                retry_after=retry_after,
+            )
             last_provider = provider_name
             last_model = provider_model
-            last_status = int(first_payload["status"])
-            last_error = str(first_payload.get("message") or "provider error")
+            last_status = status_code
+            last_error = message
             last_error_type = str(first_payload.get("type") or _error_type_from_status(last_status))
-            last_retry_after = first_payload.get("retry_after")
+            last_retry_after = retry_after
             if last_retry_after is None and last_status >= 500:
                 last_retry_after = DEFAULT_RETRY_AFTER_SECONDS
             continue
