@@ -620,8 +620,15 @@ async def _stream_chat_response(
 
     def _encode_event(raw_event: Any) -> bytes:
         if isinstance(raw_event, dict):
-            event_name = raw_event.get("event")
-            data_field = raw_event.get("data")
+            event_name = raw_event.get("event") or raw_event.get("event_type")
+            if "data" in raw_event:
+                data_field = raw_event.get("data")
+            else:
+                data_field = {
+                    key: value
+                    for key, value in raw_event.items()
+                    if key not in {"event", "event_type"}
+                }
         else:
             event_name = getattr(raw_event, "event_type", None)
             data_field = raw_event
@@ -675,6 +682,7 @@ async def _stream_chat_response(
                 data_field = asdict(data_field)
 
         if isinstance(data_field, dict):
+            data_field = dict(data_field)
             data_field.pop("event_type", None)
             data_field.pop("raw", None)
 

@@ -7,3 +7,4 @@
 - [x] docs/birdseye: rate_limiterノード追加とcaps整備（担当: gpt-5-codex、完了）。
 - [x] docs/birdseye: rate_limiterカプセル要約を刷新し index の generated_at を更新（担当: gpt-5-codex、2025-10-19 完了）。
 - [x] tests/test_server_streaming_events.py / src/orch/server.py: SSEイベントの仕様名マッピングと `[DONE]` センチネル互換を担保する実装・テストを追加済み。後続改修時は `chat.completion.chunk` / `telemetry.usage` / `done` のエイリアス維持を徹底すること。
+- [x] tests/test_server_streaming_events.py / src/orch/server.py: dict由来 `event_type` も SSE 仕様イベント名に正規化し、`data` を常に JSON 解釈可能にする改修を実施済み。重複対応を避け、`event`/`event_type` の両経路で仕様名を崩さないこと。
