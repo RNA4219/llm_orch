@@ -5,7 +5,9 @@ import json
 import os
 import sys
 from collections.abc import Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, Mock
 
@@ -75,6 +77,17 @@ def capture_metric_records(
 
     monkeypatch.setattr(server_module.metrics, "write", capture)
     return records
+
+
+def assert_orch_headers(
+    response: httpx.Response,
+    *,
+    provider: str,
+    fallback_attempts: str,
+) -> None:
+    assert response.headers["x-orch-request-id"]
+    assert response.headers["x-orch-provider"] == provider
+    assert response.headers["x-orch-fallback-attempts"] == fallback_attempts
 
 
 def test_chat_uses_guard_estimates_and_records_usage(
@@ -173,6 +186,7 @@ def test_chat_uses_guard_estimates_and_records_usage(
     response = client.post("/v1/chat/completions", json=body)
 
     assert response.status_code == 200
+    assert_orch_headers(response, provider="dummy", fallback_attempts="0")
     assert fake_guard.acquire_calls == [expected_estimate]
     assert fake_guard.record_usage_calls
     lease, usage_prompt, usage_completion = fake_guard.record_usage_calls[0]
@@ -362,6 +376,39 @@ def test_chat_releases_guard_usage_on_provider_exception(
     assert bucket._total == 0
 
 
+def test_chat_failure_response_includes_orch_headers_after_fallback(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+
+    @asynccontextmanager
+    async def lease_ctx() -> Any:
+        yield object()
+
+    guard = SimpleNamespace(acquire=lambda **_kwargs: lease_ctx(), record_usage=lambda *_args, **_kwargs: 0.0)
+    monkeypatch.setattr(server_module, "guards", SimpleNamespace(get=lambda *_args, **_kwargs: guard), raising=False)
+    monkeypatch.setattr(server_module, "MAX_PROVIDER_ATTEMPTS", 1)
+
+    route = SimpleNamespace(primary="primary", fallback=["fallback"])
+    monkeypatch.setattr(server_module.planner, "plan", lambda *_: route)
+
+    failure = AsyncMock(side_effect=RuntimeError("boom"))
+    primary_provider = SimpleNamespace(model="primary-model", chat=failure)
+    fallback_provider = SimpleNamespace(model="fallback-model", chat=failure)
+    monkeypatch.setitem(server_module.providers.providers, "primary", primary_provider)
+    monkeypatch.setitem(server_module.providers.providers, "fallback", fallback_provider)
+
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "req-model", "messages": [{"role": "user", "content": "hi"}]},
+    )
+
+    assert response.status_code == 502
+    assert_orch_headers(response, provider="fallback", fallback_attempts="1")
+
+
 def assert_single_req_id(records: list[dict[str, object]]) -> None:
     assert records
     req_ids = {record.get("req_id") for record in records}
@@ -404,6 +451,7 @@ def test_chat_streams_events(
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
+    assert_orch_headers(response, provider="dummy", fallback_attempts="0")
     body = response.text
     assert "\"delta\"" in body
     assert "data: [DONE]" in body
