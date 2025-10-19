@@ -2,16 +2,19 @@
   "id": "src/orch/rate_limiter.py",
   "role": "infrastructure",
   "public_api": [
+    "ProviderGuards.__init__(providers)",
+    "ProviderGuards.get(name)",
     "Guard.acquire(estimated_prompt_tokens=0)",
     "Guard.record_usage(lease, usage_prompt_tokens, usage_completion_tokens)",
-    "ProviderGuards.get(name)",
-    "SlidingWindowBucket.reserve(tokens, now)"
+    "SlidingWindowBucket.reserve(tokens, now)",
+    "SlidingWindowBucket.commit(reservation_id, tokens, now)",
+    "SlidingWindowBucket.cancel(reservation_id, now)"
   ],
-  "summary": "RPM/TPM/並列の制限を統合し、プロバイダ呼び出しごとに待機/リース管理を行う非同期ガード群。TokenBucketで分単位RPM、SlidingWindowBucketでTPMを維持し、GuardがSemaphoreと組み合わせてAPI呼び出しの整列を担う。",
+  "summary": "プロバイダ単位のRPM/並列/TPM制御を統合する非同期レートリミッタ群。TokenBucketとSemaphoreで分単位RPM・同時実行数を、SlidingWindowBucketでトークン毎分の滑動窓制限を担い、Guardが予約・実績トークン管理を調停する。",
   "details": {
-    "ProviderGuards": "ProviderDef群からGuardを初期化し名前→Guardの辞書を提供するファクトリ。サーバ起動時や設定リロード時に呼ばれ、プロバイダごとのrpm/concurrency/tpmをそのままGuardへ伝搬する。",
-    "Guard": "TokenBucket/SlidingWindowBucket/Semaphoreを束ねた非同期コンテキスト。acquire/__aenter__でスロットを確保し、record_usageで実績トークンをコミットしてTPM待機時間を返す。リースはGuardLeaseで追跡し、未使用予約はrelease時にキャンセルする。",
-    "SlidingWindowBucket": "TPM制御用のスライディングウィンドウ。reserveで推定トークンを仮押さえし、commitで実績に置換。window_seconds内のエントリをpruneしながら不足分に応じた待機秒数を計算する。"
+    "ProviderGuards": "ProviderDef辞書からGuardを生成し、名前→Guardを返すアクセサを提供。サーバ初期化や設定リロード時に各プロバイダのrpm/concurrency/tpmを反映させる。",
+    "Guard": "TokenBucket/SlidingWindowBucket/Semaphoreを束ねた非同期ガード。acquire/__aenter__でRPM・TPMスロットを確保し、record_usageで実績トークンをコミットして追加待機秒を返す。GuardLeaseをタスク毎に積み、未コミット予約はreleaseでキャンセルする。",
+    "SlidingWindowBucket": "TPM制御用スライディングウィンドウ。reserveで推定トークンを仮押さえし、commitで実績トークンに更新、cancelで未使用予約を打ち消す。prune/time_until_reductionを通じて過去ウィンドウを落とし、必要待機時間を算出する。"
   },
   "deps_out": [
     "src/orch/router.py"
