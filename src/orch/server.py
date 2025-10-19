@@ -68,6 +68,16 @@ PROM_HISTOGRAM: defaultdict[tuple[str, str], dict[str, Any]] = defaultdict(
 )
 
 
+def _make_response_headers(*, req_id: str, provider: str | None, attempts: int) -> dict[str, str]:
+    fallback_attempts = max(attempts - 1, 0)
+    provider_value = provider or "unknown"
+    return {
+        "x-orch-request-id": req_id,
+        "x-orch-provider": provider_value,
+        "x-orch-fallback-attempts": str(fallback_attempts),
+    }
+
+
 def _estimate_text_tokens(text: str) -> int:
     normalized = text.strip()
     if not normalized:
@@ -460,7 +470,12 @@ async def chat_completions(req: Request, body: ChatRequest):
 
     if success_response is not None and success_record is not None:
         await _log_metrics(success_record)
-        return JSONResponse(chat_response_from_provider(success_response))
+        headers = _make_response_headers(
+            req_id=req_id, provider=last_provider, attempts=attempt_count
+        )
+        return JSONResponse(
+            chat_response_from_provider(success_response), headers=headers
+        )
 
     latency_ms = int((time.perf_counter() - start) * 1000)
     failure_status = BAD_GATEWAY_STATUS
@@ -499,7 +514,12 @@ async def chat_completions(req: Request, body: ChatRequest):
     }
     if failure_retry_after is not None:
         error_payload["retry_after"] = failure_retry_after
-    return JSONResponse({"error": error_payload}, status_code=failure_status)
+    headers = _make_response_headers(
+        req_id=req_id, provider=last_provider, attempts=attempt_count
+    )
+    return JSONResponse(
+        {"error": error_payload}, status_code=failure_status, headers=headers
+    )
 
 
 async def _stream_chat_response(
@@ -514,8 +534,13 @@ async def _stream_chat_response(
 ) -> JSONResponse | StreamingResponse:
     providers_to_try = [route.primary] + route.fallback
     if not providers_to_try:
+        headers = _make_response_headers(
+            req_id=req_id, provider=route.primary or "unroutable", attempts=0
+        )
         return JSONResponse(
-            {"error": {"message": "routing unavailable"}}, status_code=400
+            {"error": {"message": "routing unavailable"}},
+            status_code=400,
+            headers=headers,
         )
 
     def _encode_event(raw_event: Any) -> bytes:
@@ -750,7 +775,12 @@ async def _stream_chat_response(
             }
             if retry_after is not None:
                 error_payload["retry_after"] = retry_after
-            return JSONResponse({"error": error_payload}, status_code=status_code)
+            headers = _make_response_headers(
+                req_id=req_id, provider=provider_name, attempts=attempts
+            )
+            return JSONResponse(
+                {"error": error_payload}, status_code=status_code, headers=headers
+            )
         if first_kind == "fallback":
             await producer_task
             last_provider = provider_name
@@ -793,7 +823,15 @@ async def _stream_chat_response(
                 except Exception:
                     pass
 
-        return StreamingResponse(event_source(), media_type="text/event-stream")
+        response = StreamingResponse(event_source(), media_type="text/event-stream")
+        response.headers.update(
+            _make_response_headers(
+                req_id=req_id,
+                provider=provider_name,
+                attempts=attempts,
+            )
+        )
+        return response
 
     latency_ms = int((time.perf_counter() - start) * 1000)
     failure_status = last_status or BAD_GATEWAY_STATUS
@@ -821,4 +859,9 @@ async def _stream_chat_response(
     error_payload = {"message": failure_error, "type": failure_error_type}
     if last_retry_after is not None:
         error_payload["retry_after"] = last_retry_after
-    return JSONResponse({"error": error_payload}, status_code=failure_status)
+    headers = _make_response_headers(
+        req_id=req_id, provider=last_provider, attempts=attempts
+    )
+    return JSONResponse(
+        {"error": error_payload}, status_code=failure_status, headers=headers
+    )
