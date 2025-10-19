@@ -9,6 +9,12 @@ from threading import Event
 import pytest
 from fastapi.testclient import TestClient
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from tests.test_server_routes import load_app
+
 
 def test_config_refresh_loop_runs_and_stops(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -49,3 +55,74 @@ def test_config_refresh_loop_runs_and_stops(tmp_path: Path, monkeypatch: pytest.
     time.sleep(0.05)
     assert len(refresh_calls) == expected_calls
     assert task.cancelled()
+
+
+def test_reload_configuration_replaces_runtime_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    configs = {
+        "providers.dummy.toml": (
+            "[dummy]\n"
+            "type = \"dummy\"\n"
+            "model = \"initial\"\n"
+            "base_url = \"http://initial\"\n"
+            "rpm = 60\n"
+            "concurrency = 1\n"
+        ),
+        "router.yaml": (
+            "defaults:\n"
+            "  temperature: 0.2\n"
+            "  max_tokens: 64\n"
+            "  task_header: \"x-orch-task-kind\"\n"
+            "  task_header_value: \"PLAN\"\n"
+            "routes:\n"
+            "  PLAN:\n"
+            "    primary: dummy\n"
+        ),
+    }
+    for name, content in configs.items():
+        (tmp_path / name).write_text(content)
+    monkeypatch.setenv("ORCH_CONFIG_DIR", str(tmp_path))
+
+    load_app("1")
+    server_module = sys.modules["src.orch.server"]
+
+    assert server_module.planner._config_dir == str(tmp_path)
+
+    provider_before = server_module.providers.get("dummy")
+    assert provider_before.defn.base_url == "http://initial"
+    assert server_module.cfg.router.defaults.temperature == 0.2
+    assert server_module.planner.cfg.defaults.temperature == 0.2
+    guard_before = server_module.guards.get("dummy")
+    assert guard_before.sem._value == 1
+
+    time.sleep(0.05)
+    (tmp_path / "providers.dummy.toml").write_text(
+        "[dummy]\n"
+        "type = \"dummy\"\n"
+        "model = \"updated\"\n"
+        "base_url = \"http://updated\"\n"
+        "rpm = 120\n"
+        "concurrency = 2\n"
+    )
+    (tmp_path / "router.yaml").write_text(
+        "defaults:\n"
+        "  temperature: 0.5\n"
+        "  max_tokens: 128\n"
+        "  task_header: \"x-orch-task-kind\"\n"
+        "  task_header_value: \"PLAN\"\n"
+        "routes:\n"
+        "  PLAN:\n"
+        "    primary: dummy\n"
+    )
+
+    server_module.reload_configuration()
+
+    provider_after = server_module.providers.get("dummy")
+    assert provider_after is not provider_before
+    assert provider_after.defn.base_url == "http://updated"
+    assert server_module.cfg.router.defaults.temperature == 0.5
+    assert server_module.planner.cfg.defaults.temperature == 0.5
+    assert server_module.planner.providers["dummy"].base_url == "http://updated"
+    guard_after = server_module.guards.get("dummy")
+    assert guard_after.sem._value == 2

@@ -129,7 +129,13 @@ def _estimate_prompt_tokens(messages: list[dict[str, Any]], fallback: int) -> in
 cfg = load_config(CONFIG_DIR, use_dummy=USE_DUMMY)
 providers = ProviderRegistry(cfg.providers)
 guards = ProviderGuards(cfg.providers)
-planner = RoutePlanner(cfg.router, cfg.providers)
+planner = RoutePlanner(
+    cfg.router,
+    cfg.providers,
+    config_dir=CONFIG_DIR,
+    use_dummy=USE_DUMMY,
+    mtimes=cfg.mtimes,
+)
 metrics = MetricsLogger(os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "metrics"))
 
 _config_refresh_task: asyncio.Task[None] | None = None
@@ -172,6 +178,21 @@ async def _stop_config_refresh() -> None:
     except asyncio.CancelledError:
         pass
     _config_refresh_task = None
+
+
+def reload_configuration() -> None:
+    global cfg, providers, guards, planner
+    new_cfg = load_config(CONFIG_DIR, use_dummy=USE_DUMMY)
+    cfg = new_cfg
+    providers = ProviderRegistry(new_cfg.providers)
+    guards = ProviderGuards(new_cfg.providers)
+    planner = RoutePlanner(
+        new_cfg.router,
+        new_cfg.providers,
+        config_dir=CONFIG_DIR,
+        use_dummy=USE_DUMMY,
+        mtimes=new_cfg.mtimes,
+    )
 
 
 def _http_status_error_details(exc: httpx.HTTPStatusError) -> tuple[int | None, str]:
