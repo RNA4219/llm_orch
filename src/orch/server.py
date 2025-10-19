@@ -419,7 +419,9 @@ async def chat_completions(req: Request, body: ChatRequest):
             "usage_completion": 0,
             "retries": 0,
         })
-        raise HTTPException(status_code=400, detail=detail)
+        headers = _make_response_headers(req_id=req_id, provider=None, attempts=0)
+        error_payload = {"message": detail, "type": "routing_error"}
+        return JSONResponse({"error": error_payload}, status_code=400, headers=headers)
     if body.stream:
         return await _stream_chat_response(
             model=body.model,
