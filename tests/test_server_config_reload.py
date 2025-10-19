@@ -129,6 +129,97 @@ def test_reload_configuration_replaces_runtime_state(
     assert guard_after.sem._value == 2
 
 
+def test_config_refresh_loop_applies_reload_when_planner_requests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    configs = {
+        "providers.dummy.toml": (
+            "[dummy]\n"
+            "type = \"dummy\"\n"
+            "model = \"initial\"\n"
+            "base_url = \"http://initial\"\n"
+            "rpm = 60\n"
+            "concurrency = 1\n"
+        ),
+        "router.yaml": (
+            "defaults:\n"
+            "  temperature: 0.2\n"
+            "  max_tokens: 64\n"
+            "  task_header: \"x-orch-task-kind\"\n"
+            "  task_header_value: \"PLAN\"\n"
+            "routes:\n"
+            "  PLAN:\n"
+            "    primary: dummy\n"
+        ),
+    }
+    for name, content in configs.items():
+        (tmp_path / name).write_text(content)
+    monkeypatch.setenv("ORCH_CONFIG_DIR", str(tmp_path))
+
+    load_app("1")
+    server_module = sys.modules["src.orch.server"]
+
+    provider_before = server_module.providers.get("dummy")
+    assert provider_before.defn.base_url == "http://initial"
+
+    (tmp_path / "providers.dummy.toml").write_text(
+        "[dummy]\n"
+        "type = \"dummy\"\n"
+        "model = \"updated\"\n"
+        "base_url = \"http://updated\"\n"
+        "rpm = 120\n"
+        "concurrency = 2\n"
+    )
+    (tmp_path / "router.yaml").write_text(
+        "defaults:\n"
+        "  temperature: 0.5\n"
+        "  max_tokens: 128\n"
+        "  task_header: \"x-orch-task-kind\"\n"
+        "  task_header_value: \"PLAN\"\n"
+        "routes:\n"
+        "  PLAN:\n"
+        "    primary: dummy\n"
+    )
+
+    monkeypatch.setattr(server_module, "CONFIG_REFRESH_INTERVAL", 0.0, raising=False)
+
+    refresh_calls = 0
+
+    def fake_refresh() -> bool:
+        nonlocal refresh_calls
+        refresh_calls += 1
+        return refresh_calls == 1
+
+    monkeypatch.setattr(server_module.planner, "refresh", fake_refresh)
+
+    async def _run_loop() -> None:
+        reload_event = asyncio.Event()
+        original_reload = server_module.reload_configuration
+
+        def wrapped_reload_configuration() -> None:
+            original_reload()
+            reload_event.set()
+
+        monkeypatch.setattr(server_module, "reload_configuration", wrapped_reload_configuration)
+
+        task = asyncio.create_task(server_module._config_refresh_loop())
+        try:
+            await asyncio.wait_for(reload_event.wait(), timeout=1.0)
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    asyncio.run(_run_loop())
+
+    provider_after = server_module.providers.get("dummy")
+    assert provider_after.defn.base_url == "http://updated"
+    assert server_module.cfg.router.defaults.temperature == 0.5
+    assert server_module.planner.cfg.defaults.temperature == 0.5
+    assert server_module.planner.providers["dummy"].base_url == "http://updated"
+    assert refresh_calls >= 1
+
+
 def test_config_refresh_loop_reloads_when_planner_requests(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
