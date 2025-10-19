@@ -49,12 +49,14 @@ curl -s -H "Content-Type: application/json" \
 - `ORCH_API_KEY_HEADER` : APIキーを読むヘッダ名（既定 `x-api-key`）。
 - `ORCH_CORS_ALLOW_ORIGINS` : カンマ区切りの許可Origin。
 - `ORCH_RETRY_AFTER_SECONDS` : `Retry-After` ヘッダ欠如時のフォールバック秒数（既定30秒）。
+- `ORCH_OTEL_METRICS_EXPORT` : OpenTelemetryメトリクスの送出を有効化。真値（`1`/`true`/`yes`/`on`）で `requests_total` と `latency_ms` をエクスポート（例: `export ORCH_OTEL_METRICS_EXPORT=1`）。
 
 ## メトリクス
 
 - 既定は `metrics/requests-YYYYMMDD.jsonl` に 1リクエスト=1行追記。
 - フィールド: `ts, req_id, task, provider, model, latency_ms, ok, status, error, retries, usage_prompt, usage_completion`
 - Prometheusエンドポイント: `GET /metrics` （`orch_requests_total` カウンタ / `orch_request_latency_seconds` ヒストグラム）。`ORCH_INBOUND_API_KEYS` を設定した場合は同じキーで保護されます。
+- OpenTelemetryエクスポートを有効化するには `ORCH_OTEL_METRICS_EXPORT` を真値で設定（例: `export ORCH_OTEL_METRICS_EXPORT=1`）。有効時は `requests_total` カウンタと `latency_ms` ヒストグラムを、プロバイダ/HTTPステータス/成功可否を属性として送出します。`MetricsLogger` はJSONL書き込み時に同じレコードをOpenTelemetryにも流し、`flush()` 呼び出しで強制エクスポートします。
 
 ## ストリーミングフォーマット
 
@@ -66,6 +68,5 @@ curl -s -H "Content-Type: application/json" \
 
 ## 既知の制限（MVP）
 
-- OpenTelemetry連携は未実装。
 - 設定ファイル（`providers.toml` / `router.yaml`）のホットリロードは未対応。
 - TPMガードは `usage` が欠落するプロバイダでは推定トークンを用いるため、保守的なスロットリングが発生します。
