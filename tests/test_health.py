@@ -2,9 +2,7 @@ import importlib
 import os
 import sys
 from pathlib import Path
-import textwrap
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -94,4 +92,9 @@ routes:
         },
     )
     assert response.status_code == 400
-    assert "no route configured" in response.json()["detail"]
+    payload = response.json()
+    if "detail" in payload:
+        message = payload["detail"]
+    else:
+        message = payload.get("error", {}).get("message", "")
+    assert "no route configured" in message
