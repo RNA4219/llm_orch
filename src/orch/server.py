@@ -619,33 +619,27 @@ async def _stream_chat_response(
         )
 
     def _encode_event(raw_event: Any) -> bytes:
-        if isinstance(raw_event, dict):
-            event_name = raw_event.get("event") or raw_event.get("event_type")
-            if "data" in raw_event:
-                data_field = raw_event.get("data")
-            else:
-                data_field = {
-                    key: value
-                    for key, value in raw_event.items()
-                    if key not in {"event", "event_type"}
+        def _extract_event(source: Any) -> tuple[str | None, Any]:
+            if isinstance(source, dict):
+                name = source.get("event") or source.get("event_type")
+                payload = source.get("data") if "data" in source else {
+                    key: value for key, value in source.items() if key not in {"event", "event_type"}
                 }
-        else:
-            event_name = getattr(raw_event, "event_type", None) or getattr(
-                raw_event, "event", None
-            )
-            data_field = raw_event
-
-        if not isinstance(event_name, str):
-            event_name = None
-        else:
-            event_name = event_name.strip() or None
+                return name if isinstance(name, str) else None, payload
+            name_attr = getattr(source, "event_type", None) or getattr(source, "event", None)
+            name = name_attr.strip() if isinstance(name_attr, str) else None
+            payload = getattr(source, "data", source)
+            return name, payload
 
         def _map_event(name: str | None) -> tuple[str | None, bool]:
             if not name:
                 return None, False
-            if name in {"chat.completion.chunk", "telemetry.usage", "done"}:
-                return name, name == "done"
-            lowered = name.lower()
+            normalized = name.strip()
+            if not normalized:
+                return None, False
+            if normalized in {"chat.completion.chunk", "telemetry.usage", "done"}:
+                return normalized, normalized == "done"
+            lowered = normalized.lower()
             if lowered in {"usage"} or lowered.endswith(".usage"):
                 return "telemetry.usage", False
             if lowered in {
@@ -669,35 +663,42 @@ async def _stream_chat_response(
                 "response",
             } or lowered.endswith("_delta") or lowered.endswith("_start") or lowered.endswith("_chunk") or lowered.endswith(".delta") or lowered.endswith(".chunk"):
                 return "chat.completion.chunk", False
-            return name, False
+            return normalized, False
 
-        mapped_event, is_terminal = _map_event(event_name)
-
-        if data_field is not None and not isinstance(data_field, str):
-            model_dump = getattr(data_field, "model_dump", None)
+        def _coerce_payload(payload: Any) -> Any:
+            if payload is None or isinstance(payload, (str, bytes)):
+                return payload
+            model_dump = getattr(payload, "model_dump", None)
             if callable(model_dump):
                 try:
-                    data_field = model_dump(mode="json", exclude_none=True)
+                    return model_dump(mode="json", exclude_none=True)
                 except TypeError:
-                    data_field = model_dump()
-            elif is_dataclass(data_field):
-                data_field = asdict(data_field)
+                    return model_dump()
+            if is_dataclass(payload):
+                return asdict(payload)
+            return payload
 
-        if isinstance(data_field, dict):
-            data_field = dict(data_field)
-            data_field.pop("event_type", None)
-            data_field.pop("event", None)
-            data_field.pop("raw", None)
+        event_name, payload = _extract_event(raw_event)
+        mapped_event, is_terminal = _map_event(event_name)
+        payload = _coerce_payload(payload)
+
+        if isinstance(payload, dict):
+            payload = dict(payload)
+            payload.pop("event_type", None)
+            payload.pop("event", None)
+            payload.pop("raw", None)
 
         if is_terminal:
-            data_field = {}
+            payload = {}
 
-        if isinstance(data_field, str):
-            data_text = data_field
-        elif data_field is None:
+        if isinstance(payload, bytes):
+            data_text = payload.decode("utf-8", errors="ignore")
+        elif isinstance(payload, str):
+            data_text = payload
+        elif payload is None:
             data_text = ""
         else:
-            data_text = json.dumps(data_field)
+            data_text = json.dumps(payload)
 
         lines = []
         if mapped_event:
