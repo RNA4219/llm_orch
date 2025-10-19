@@ -47,6 +47,22 @@ USE_DUMMY: bool = _env_var_as_bool("ORCH_USE_DUMMY")
 DEFAULT_RETRY_AFTER_SECONDS = int(os.environ.get("ORCH_RETRY_AFTER_SECONDS", "30"))
 
 
+def _env_var_as_float(name: str, *, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw.strip())
+    except ValueError:
+        return default
+    return value if value >= 0 else default
+
+
+CONFIG_REFRESH_INTERVAL: float = _env_var_as_float(
+    "ORCH_CONFIG_REFRESH_INTERVAL", default=30.0
+)
+
+
 def _parse_env_list(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
@@ -116,6 +132,8 @@ guards = ProviderGuards(cfg.providers)
 planner = RoutePlanner(cfg.router, cfg.providers)
 metrics = MetricsLogger(os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "metrics"))
 
+_config_refresh_task: asyncio.Task[None] | None = None
+
 if ALLOWED_ORIGINS:
     app.add_middleware(
         CORSMiddleware,
@@ -124,6 +142,36 @@ if ALLOWED_ORIGINS:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+
+async def _config_refresh_loop() -> None:
+    try:
+        while True:
+            planner.refresh()
+            await asyncio.sleep(CONFIG_REFRESH_INTERVAL if CONFIG_REFRESH_INTERVAL > 0 else 0)
+    except asyncio.CancelledError:
+        raise
+
+
+@app.on_event("startup")
+async def _start_config_refresh() -> None:
+    global _config_refresh_task
+    if _config_refresh_task is None or _config_refresh_task.done():
+        _config_refresh_task = asyncio.create_task(_config_refresh_loop())
+
+
+@app.on_event("shutdown")
+async def _stop_config_refresh() -> None:
+    global _config_refresh_task
+    task = _config_refresh_task
+    if task is None:
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    _config_refresh_task = None
 
 
 def _http_status_error_details(exc: httpx.HTTPStatusError) -> tuple[int | None, str]:
