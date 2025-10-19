@@ -804,33 +804,18 @@ async def _stream_chat_response(
 
         producer_task = asyncio.create_task(producer())
         first_kind, first_payload = await queue.get()
-        first_chunk: bytes | None = None
-        prefetched_chunks: list[bytes] = []
-        initial_done = False
-        if first_kind == "data":
-            first_chunk = first_payload
-            await asyncio.sleep(0)
-            drained: list[tuple[str, Any]] = []
-            while True:
-                try:
-                    drained.append(queue.get_nowait())
-                except asyncio.QueueEmpty:
-                    break
-            for kind, payload in drained:
-                if kind == "data":
-                    prefetched_chunks.append(payload)
-                    continue
-                if kind == "done":
-                    initial_done = True
-                    continue
-                if kind in {"error", "fallback"}:
-                    first_kind = kind
-                    first_payload = payload
-                    first_chunk = None
-                    prefetched_chunks.clear()
-                    initial_done = False
-                    break
-                raise RuntimeError("unexpected stream signal")
+        buffered_events: list[tuple[str, Any]] = []
+        while True:
+            try:
+                next_kind, next_payload = queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if next_kind == "fallback":
+                first_kind = "fallback"
+                first_payload = next_payload
+                buffered_events.clear()
+                break
+            buffered_events.append((next_kind, next_payload))
         if first_kind == "error":
             await producer_task
             status_code = int(first_payload["status"])
@@ -881,14 +866,24 @@ async def _stream_chat_response(
         if first_kind not in {"data", "done"}:
             await producer_task
             raise RuntimeError("unexpected stream signal")
+        initial_chunks: list[bytes] = []
+        initial_done = False
+        if first_kind == "data":
+            initial_chunks.append(first_payload)
+        elif first_kind == "done":
+            initial_done = True
+        for buffered_kind, buffered_payload in buffered_events:
+            if buffered_kind == "data":
+                initial_chunks.append(buffered_payload)
+            elif buffered_kind == "done":
+                initial_done = True
+                break
 
         async def event_source() -> Any:
             try:
-                if first_chunk is not None:
-                    yield first_chunk
-                for chunk in prefetched_chunks:
+                for chunk in initial_chunks:
                     yield chunk
-                if first_kind == "done":
+                if initial_done:
                     yield b"data: [DONE]\n\n"
                     return
                 if initial_done:
