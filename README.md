@@ -68,5 +68,5 @@ curl -s -H "Content-Type: application/json" \
 
 ## 既知の制限（MVP）
 
-- 設定ファイル（`providers.toml` / `router.yaml`）のホットリロードは未対応。
+- 設定ファイル（`providers.toml` / `router.yaml`）は `_config_refresh_loop` が監視し、更新検知時に `reload_configuration()` を通じて自動反映されます。
 - TPMガードは `usage` が欠落するプロバイダでは推定トークンを用いるため、保守的なスロットリングが発生します。
