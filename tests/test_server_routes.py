@@ -4,7 +4,9 @@ import importlib
 import json
 import os
 import sys
+from contextlib import asynccontextmanager
 from collections.abc import Callable
+from types import SimpleNamespace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, Mock
@@ -182,6 +184,42 @@ def test_chat_uses_guard_estimates_and_records_usage(
     assert fake_planner.record_failure_calls == []
 
 
+@pytest.mark.parametrize("stream", [False, True], ids=["sync", "stream"])
+def test_chat_sets_headers_on_success(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch, stream: bool
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+
+    if stream:
+        async def chat_stream(self, *args: object, **kwargs: object):
+            yield {"event": "chunk", "data": {"choices": [{"delta": {"content": "hi"}}]}}
+
+        provider = type(
+            "StreamProvider", (), {"model": "dummy", "chat_stream": chat_stream}
+        )()
+    else:
+        from src.orch.types import ProviderChatResponse
+
+        async def chat(self, *args: object, **kwargs: object) -> object:
+            return ProviderChatResponse(status_code=200, model="dummy", content="ok")
+
+        provider = type("SyncProvider", (), {"model": "dummy", "chat": chat})()
+
+    monkeypatch.setitem(server_module.providers.providers, "dummy", provider)
+
+    payload = {"model": "dummy", "messages": [{"role": "user", "content": "hello"}]}
+    if stream:
+        payload["stream"] = True
+
+    response = TestClient(app).post("/v1/chat/completions", json=payload)
+
+    assert response.status_code == 200
+    assert response.headers["x-orch-request-id"]
+    assert response.headers["x-orch-provider"] == "dummy"
+    assert response.headers["x-orch-fallback-attempts"] == "0"
+
+
 @pytest.mark.parametrize(
     "exception_factory, expected_status",
     [
@@ -283,6 +321,57 @@ def test_chat_records_planner_failure_on_guarded_errors(
     assert all(name == "dummy" for name in fake_planner.record_failure_calls)
     if expected_status == 429:
         assert fake_planner.record_failure_calls == ["dummy"]
+
+
+def test_chat_sets_headers_on_fallback_failure(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+
+    @asynccontextmanager
+    async def guard_cm() -> object:
+        yield object()
+
+    guard = SimpleNamespace(
+        _tpm_bucket=None, acquire=lambda *, estimated_prompt_tokens: guard_cm()
+    )
+
+    class _Route:
+        primary = "primary"
+        fallback = ["backup"]
+
+    planner = SimpleNamespace(
+        plan=lambda task: _Route(),
+        record_success=lambda provider: None,
+        record_failure=lambda provider, *, now=None: None,
+    )
+
+    async def _fail(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("boom")
+
+    failing_provider = SimpleNamespace(model="dummy", chat=_fail)
+
+    monkeypatch.setattr(
+        server_module,
+        "guards",
+        SimpleNamespace(get=lambda name: guard),
+        raising=False,
+    )
+    monkeypatch.setattr(server_module, "planner", planner, raising=False)
+    monkeypatch.setattr(server_module, "MAX_PROVIDER_ATTEMPTS", 1)
+    monkeypatch.setitem(server_module.providers.providers, "primary", failing_provider)
+    monkeypatch.setitem(server_module.providers.providers, "backup", failing_provider)
+
+    response = TestClient(app).post(
+        "/v1/chat/completions",
+        json={"model": "dummy", "messages": [{"role": "user", "content": "hello"}]},
+    )
+
+    assert response.status_code == 502
+    assert response.headers["x-orch-request-id"]
+    assert response.headers["x-orch-provider"] == "backup"
+    assert response.headers["x-orch-fallback-attempts"] == "1"
 
 
 @pytest.mark.parametrize(
