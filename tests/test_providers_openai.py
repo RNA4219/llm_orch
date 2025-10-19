@@ -530,3 +530,63 @@ def test_openai_chat_stream_normalizes_sse(monkeypatch: pytest.MonkeyPatch) -> N
     assert response.finish_reason == "stop"
     assert response.usage_prompt_tokens == 5
     assert response.usage_completion_tokens == 7
+
+
+def test_openai_chat_stream_handles_done_without_separator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "secret")
+    provider = make_provider("https://api.openai.com")
+
+    class FakeStreamResponse:
+        def __init__(self, lines: list[str]) -> None:
+            self._lines = lines
+            self.headers: dict[str, str] = {}
+            self.status_code = 200
+
+        async def aiter_lines(self) -> AsyncGenerator[str, None]:
+            for line in self._lines:
+                yield line
+
+        def raise_for_status(self) -> None:
+            return None
+
+    class FakeStreamContext:
+        def __init__(self, response: FakeStreamResponse) -> None:
+            self._response = response
+
+        async def __aenter__(self) -> FakeStreamResponse:
+            return self._response
+
+        async def __aexit__(self, exc_type, exc: BaseException | None, tb: Any) -> None:
+            return None
+
+    lines = [
+        "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2}}",
+        "data: [DONE]",
+    ]
+
+    def fake_stream(self: httpx.AsyncClient, method: str, url: str, **kwargs: Any) -> FakeStreamContext:
+        assert method == "POST"
+        assert kwargs.get("json", {}).get("stream") is True
+        return FakeStreamContext(FakeStreamResponse(lines))
+
+    monkeypatch.setattr(httpx.AsyncClient, "stream", fake_stream)
+
+    async def collect() -> list[ProviderStreamChunkModel]:
+        results: list[ProviderStreamChunkModel] = []
+        async for chunk in provider.chat_stream(  # type: ignore[attr-defined]
+            model="gpt-4o",
+            messages=[{"role": "user", "content": "hello"}],
+        ):
+            results.append(chunk)
+        return results
+
+    chunks = asyncio.run(collect())
+
+    assert len(chunks) == 1
+    chunk = chunks[0]
+    assert chunk.event_type == "chunk"
+    assert chunk.delta == {"content": "hi"}
+    assert chunk.finish_reason == "stop"
+    assert chunk.usage == {"prompt_tokens": 3, "completion_tokens": 2}
