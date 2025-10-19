@@ -409,6 +409,27 @@ def test_chat_failure_response_includes_orch_headers_after_fallback(
     assert_orch_headers(response, provider="fallback", fallback_attempts="1")
 
 
+def test_chat_failure_response_includes_headers_for_unroutable_task(
+    route_test_config: Path,
+) -> None:
+    client = TestClient(load_app("1"))
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"x-orch-task-kind": "UNKNOWN"},
+        json={
+            "model": "dummy",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+
+    assert response.status_code == 400
+    error_body = response.json().get("error")
+    assert isinstance(error_body, dict)
+    assert response.headers["x-orch-request-id"]
+    assert response.headers["x-orch-provider"] == "unknown"
+    assert response.headers["x-orch-fallback-attempts"] == "0"
+
+
 def assert_single_req_id(records: list[dict[str, object]]) -> None:
     assert records
     req_ids = {record.get("req_id") for record in records}
@@ -1358,7 +1379,7 @@ def test_chat_missing_route_and_default_returns_400(route_test_config: Path) -> 
         },
     )
     assert response.status_code == 400
-    assert response.json()["detail"] == (
+    assert response.json()["error"]["message"] == (
         "no route configured for task 'IDEATE' and no DEFAULT route defined in router configuration."
     )
 
@@ -1730,7 +1751,7 @@ routes:
         },
     )
     assert failure.status_code == 400
-    assert failure.json()["detail"] == (
+    assert failure.json()["error"]["message"] == (
         "no route configured for task 'DEFAULT' and no DEFAULT route defined in router configuration."
     )
 
