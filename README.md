@@ -1,6 +1,6 @@
-# llm-orch (MVP)
+# llm-orch
 
-OpenAI互換 `/v1/chat/completions` を受け付ける**薄いオーケストレーター**。**RPM/並列制御、429/5xx再試行、フォールバック、Ollama吸収、/healthz、JSONLメトリクス**に対応（MVP）。
+OpenAI互換 `/v1/chat/completions` を受け付ける**薄いオーケストレーター**。**SSEストリーミング、weighted/priority/sticky ルーティング、RPM/TPM/並列制御、429/5xx再試行、フォールバック、Prometheus/OpenTelemetry メトリクス、APIキー/CORS、ホットリロード**に対応しています。
 
 <!-- LLM-BOOTSTRAP v1 -->
 読む順番:
@@ -38,17 +38,18 @@ curl -s -H "Content-Type: application/json" \
 
 ## 設定
 
-- `config/providers.toml` : プロバイダ定義（type/base_url/model/auth_env/rpm/concurrency）
-- `config/router.yaml` : タスク種別ごとのプライマリ/フォールバック定義（ヘッダ `x-orch-task-kind`）
+- `config/providers.toml` : プロバイダ定義（`type` / `base_url` / `model` / `auth_env` / `rpm` / `tpm` / `concurrency`）
+- `config/router.yaml` : タスク種別ごとの weighted / priority / sticky ルートを宣言（ヘッダ `x-orch-task-kind`）。sticky ルートは `RoutePlanner.plan(..., sticky_key=...)` でキーを渡した呼び出しにより TTL 内固定が行われます。
 
 > ローカル動作のみなら `providers.dummy.toml` を `providers.toml` に置き換えてください。
 
 ### 環境変数
 
-- `ORCH_INBOUND_API_KEYS` : カンマ区切りのAPIキー一覧。空なら認証なし。
+- `ORCH_INBOUND_API_KEYS` : カンマ区切りのAPIキー一覧。空なら認証なし。設定時は `tools/ci/smoke.sh` も同じキーで疎通します。
 - `ORCH_API_KEY_HEADER` : APIキーを読むヘッダ名（既定 `x-api-key`）。
 - `ORCH_CORS_ALLOW_ORIGINS` : カンマ区切りの許可Origin。
 - `ORCH_RETRY_AFTER_SECONDS` : `Retry-After` ヘッダ欠如時のフォールバック秒数（既定30秒）。
+- `ORCH_CONFIG_REFRESH_INTERVAL` : 設定ファイル変更を監視するポーリング間隔（秒）。既定30秒。`0` でポーリング毎ループ。
 - `ORCH_OTEL_METRICS_EXPORT` : OpenTelemetryメトリクスの送出を有効化。真値（`1`/`true`/`yes`/`on`）で `requests_total` と `latency_ms` をエクスポート（例: `export ORCH_OTEL_METRICS_EXPORT=1`）。
 
 ## メトリクス
@@ -62,11 +63,19 @@ curl -s -H "Content-Type: application/json" \
 
 - リクエストで `{"stream": true}` を指定すると `text/event-stream` を返却します。
 - `data: {...}` 形式のOpenAI互換チャンクが連続し、終端は `data: [DONE]`。
-- チャンクのJSONには `choices[].delta` など通常のOpenAI互換フィールドが含まれます。
+- 各イベントには `event: chat.completion.chunk` / `event: telemetry.usage` / `event: done` が付与され、`choices[].delta` などOpenAI互換フィールドを含みます。
 - プライマリプロバイダが初回チャンク生成前に 5xx や接続例外を返した場合はルート定義のフォールバック先へ自動で切り替わり、すべて失敗した場合のみJSONエラーを返します。再試行不可な 4xx/429 は即座にJSONエラーとなり、429/5xx時は `retry_after` を付与します。
 - `ProviderGuards` によりRPM/並列/TPM制御がストリームでも適用され、フォールバックごとにスロットが解放・再取得されるため、TPMバケット残量が不足すると待機またはエラーになります。
 
-## 既知の制限（MVP）
+## レスポンスヘッダ
 
-- 設定ファイル（`providers.toml` / `router.yaml`）は `_config_refresh_loop` が監視し、更新検知時に `reload_configuration()` を通じて自動反映されます。
+- すべての `/v1/chat/completions` 応答（成功・エラー・SSE）で `x-orch-request-id` / `x-orch-provider` / `x-orch-fallback-attempts` を返却します。フォールバックが発生した場合は試行回数に応じて `x-orch-fallback-attempts` が加算されます。
+
+## ホットリロード
+
+- `_config_refresh_loop` が `ORCH_CONFIG_DIR` 配下の `providers.toml` / `router.yaml` を監視し、更新検知時に `reload_configuration()` を経由して `RoutePlanner` / `ProviderRegistry` / `ProviderGuards` を再構築します。
+
+## 既知の制限
+
+- HTTP エンドポイントは `sticky_key` をまだ受け付けておらず、sticky ルートは内部コンポーネントからの呼び出し時のみ適用されます。
 - TPMガードは `usage` が欠落するプロバイダでは推定トークンを用いるため、保守的なスロットリングが発生します。
