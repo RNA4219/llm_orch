@@ -11,9 +11,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.orch.router import RouteDef, RouteTarget
+from src.orch.router import RouteDef, RouteTarget  # noqa: E402
 
-from tests.test_server_routes import load_app
+from tests.test_server_routes import load_app  # noqa: E402
 
 
 def _http_status_error(status_code: int) -> httpx.HTTPStatusError:
@@ -24,8 +24,7 @@ def _http_status_error(status_code: int) -> httpx.HTTPStatusError:
 
 def _failing_stream(*_args: Any, **_kwargs: Any) -> Any:
     async def _generator() -> Any:
-        if False:  # pragma: no cover - generator formality
-            yield None
+        yield {"event": "message", "data": {"id": "primary"}}
         raise _http_status_error(500)
 
     return _generator()
@@ -35,6 +34,16 @@ def _successful_stream(*_args: Any, **_kwargs: Any) -> Any:
     async def _generator() -> Any:
         yield {"event": "message", "data": {"id": "1"}}
         yield {"event": "message", "data": {"id": "2"}}
+
+    return _generator()
+
+
+def _error_stream(*_args: Any, **_kwargs: Any) -> Any:
+    async def _generator() -> Any:
+        yield {"event": "message", "data": {"id": "primary"}}
+        from src.orch.providers import UnsupportedContentBlockError
+
+        raise UnsupportedContentBlockError("unsupported")
 
     return _generator()
 
@@ -53,6 +62,13 @@ class _Registry:
 
     def get(self, key: str) -> Any:
         return self._mapping[key]
+
+
+def _make_provider(model: str, stream: Any | None = None) -> Any:
+    attrs: dict[str, Any] = {"model": model}
+    if stream is not None:
+        attrs["chat_stream"] = staticmethod(stream)
+    return type(f"{model.title()}Provider", (), attrs)()
 
 
 def test_streaming_fallback_uses_routing(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -75,16 +91,8 @@ def test_streaming_fallback_uses_routing(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(server_module, "planner", planner_mock, raising=False)
 
     providers_mapping = {
-        "frontier_primary": type(
-            "PrimaryProvider",
-            (),
-            {"model": "primary", "chat_stream": staticmethod(_failing_stream)},
-        )(),
-        "frontier_backup": type(
-            "BackupProvider",
-            (),
-            {"model": "backup", "chat_stream": staticmethod(_successful_stream)},
-        )(),
+        "frontier_primary": _make_provider("primary", _failing_stream),
+        "frontier_backup": _make_provider("backup", _successful_stream),
     }
     guards_mapping = {
         "frontier_primary": _DummyGuard(),
@@ -104,7 +112,48 @@ def test_streaming_fallback_uses_routing(monkeypatch: pytest.MonkeyPatch) -> Non
         content = "".join(response.iter_text())
 
     assert planner_mock.plan.called
+    planner_mock.record_failure.assert_any_call("frontier_primary")
+    planner_mock.record_success.assert_called_with("frontier_backup")
+    assert "primary" not in content
     assert "[DONE]" in content
+
+
+def test_streaming_midstream_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+
+    route = RouteDef(
+        name="PLAN",
+        strategy="priority",
+        targets=[RouteTarget(provider="frontier_primary")],
+    ).ordered(["frontier_primary"])
+
+    planner_mock = Mock()
+    planner_mock.plan.return_value = route
+    planner_mock.record_success = Mock()
+    planner_mock.record_failure = Mock()
+    monkeypatch.setattr(server_module, "planner", planner_mock, raising=False)
+
+    providers_mapping = {
+        "frontier_primary": _make_provider("primary", _error_stream),
+    }
+    guards_mapping = {"frontier_primary": _DummyGuard()}
+    monkeypatch.setattr(server_module, "providers", _Registry(providers_mapping), raising=False)
+    monkeypatch.setattr(server_module, "guards", _Registry(guards_mapping), raising=False)
+
+    client = TestClient(app)
+    body = {
+        "model": "gpt-4.1-mini",
+        "messages": [{"role": "user", "content": "hi"}],
+        "stream": True,
+    }
+
+    response = client.post("/v1/chat/completions", json=body)
+
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["error"]["message"] == "unsupported"
+    planner_mock.record_success.assert_not_called()
 
 
 def test_streaming_skips_provider_without_chat_stream(
@@ -129,16 +178,8 @@ def test_streaming_skips_provider_without_chat_stream(
     monkeypatch.setattr(server_module, "planner", planner_mock, raising=False)
 
     providers_mapping = {
-        "frontier_primary": type(
-            "PrimaryProvider",
-            (),
-            {"model": "primary"},
-        )(),
-        "frontier_backup": type(
-            "BackupProvider",
-            (),
-            {"model": "backup", "chat_stream": staticmethod(_successful_stream)},
-        )(),
+        "frontier_primary": _make_provider("primary"),
+        "frontier_backup": _make_provider("backup", _successful_stream),
     }
     guards_mapping = {
         "frontier_primary": _DummyGuard(),

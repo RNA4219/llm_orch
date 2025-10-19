@@ -1,4 +1,5 @@
 import asyncio
+from builtins import anext
 import json
 import os
 import time
@@ -799,20 +800,25 @@ async def _stream_chat_response(
         if first_kind == "data":
             first_chunk = first_payload
 
-        async def event_source() -> Any:
+        async def event_source() -> tuple[str, dict[str, Any]]:
+            chunks: list[bytes] = []
             try:
                 if first_chunk is not None:
-                    yield first_chunk
+                    chunks.append(first_chunk)
                 if first_kind == "done":
-                    yield b"data: [DONE]\n\n"
-                    return
+                    chunks.append(b"data: [DONE]\n\n")
+                    return "stream", {"chunks": chunks}
                 while True:
                     kind, payload = await queue.get()
                     if kind == "data":
-                        yield payload
+                        chunks.append(payload)
                     elif kind == "done":
-                        yield b"data: [DONE]\n\n"
-                        break
+                        chunks.append(b"data: [DONE]\n\n")
+                        return "stream", {"chunks": chunks}
+                    elif kind in {"fallback", "error"}:
+                        return kind, payload
+                    else:
+                        raise RuntimeError("unexpected stream signal")
             finally:
                 if not producer_task.done():
                     producer_task.cancel()
@@ -823,15 +829,60 @@ async def _stream_chat_response(
                 except Exception:
                     pass
 
-        response = StreamingResponse(event_source(), media_type="text/event-stream")
-        response.headers.update(
-            _make_response_headers(
-                req_id=req_id,
-                provider=provider_name,
-                attempts=attempts,
+        result_kind, result_payload = await event_source()
+        if result_kind == "stream":
+            response = StreamingResponse(
+                result_payload["chunks"], media_type="text/event-stream"
             )
-        )
-        return response
+            response.headers.update(
+                _make_response_headers(
+                    req_id=req_id,
+                    provider=provider_name,
+                    attempts=attempts,
+                )
+            )
+            return response
+        if result_kind == "fallback":
+            last_provider = provider_name
+            last_model = provider_model
+            last_status = int(result_payload["status"])
+            last_error = str(result_payload.get("message") or "provider error")
+            last_error_type = str(
+                result_payload.get("type") or _error_type_from_status(last_status)
+            )
+            last_retry_after = result_payload.get("retry_after")
+            if last_retry_after is None and last_status >= 500:
+                last_retry_after = DEFAULT_RETRY_AFTER_SECONDS
+            continue
+        if result_kind == "error":
+            status_code = int(result_payload["status"])
+            message = str(result_payload.get("message") or "")
+            retry_after = result_payload.get("retry_after")
+            await _write_metrics(
+                ok=False,
+                status=status_code,
+                latency_ms=int((time.perf_counter() - start) * 1000),
+                retries=attempts - 1,
+                error=message or None,
+                retry_after=retry_after,
+            )
+            error_payload: dict[str, Any] = {
+                "message": message,
+                "type": str(
+                    result_payload.get("type") or _error_type_from_status(status_code)
+                ),
+            }
+            if retry_after is not None:
+                error_payload["retry_after"] = retry_after
+            headers = _make_response_headers(
+                req_id=req_id, provider=provider_name, attempts=attempts
+            )
+            return JSONResponse(
+                {"error": error_payload},
+                status_code=status_code,
+                headers=headers,
+            )
+        raise RuntimeError("unexpected event source result")
 
     latency_ms = int((time.perf_counter() - start) * 1000)
     failure_status = last_status or BAD_GATEWAY_STATUS
