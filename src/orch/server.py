@@ -827,6 +827,9 @@ async def _stream_chat_response(
                 if initial_done:
                     yield b"data: [DONE]\n\n"
                     return
+                if initial_done:
+                    yield b"data: [DONE]\n\n"
+                    return
                 while True:
                     kind, payload = await queue.get()
                     if kind == "data":

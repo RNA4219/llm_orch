@@ -1,3 +1,4 @@
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -35,6 +36,14 @@ def _successful_stream(*_args: Any, **_kwargs: Any) -> Any:
     async def _generator() -> Any:
         yield {"event": "message", "data": {"id": "1"}}
         yield {"event": "message", "data": {"id": "2"}}
+
+    return _generator()
+
+
+def _partial_http_error_stream(*_args: Any, **_kwargs: Any) -> Any:
+    async def _generator() -> Any:
+        yield {"event": "message", "data": {"id": "1"}}
+        raise _http_status_error(502)
 
     return _generator()
 
@@ -161,3 +170,52 @@ def test_streaming_skips_provider_without_chat_stream(
     planner_mock.record_failure.assert_called_once_with("frontier_primary")
     planner_mock.record_success.assert_called_once_with("frontier_backup")
     assert "[DONE]" in content
+
+
+def test_streaming_primary_http_error_without_backup(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+
+    route = RouteDef(
+        name="PLAN",
+        strategy="priority",
+        targets=[RouteTarget(provider="frontier_primary")],
+    ).ordered(["frontier_primary"])
+
+    planner_mock = Mock()
+    planner_mock.plan.return_value = route
+    planner_mock.record_success = Mock()
+    planner_mock.record_failure = Mock()
+    monkeypatch.setattr(server_module, "planner", planner_mock, raising=False)
+
+    providers_mapping = {
+        "frontier_primary": type(
+            "PrimaryProvider",
+            (),
+            {"model": "primary", "chat_stream": staticmethod(_partial_http_error_stream)},
+        )(),
+    }
+    guards_mapping = {
+        "frontier_primary": _DummyGuard(),
+    }
+    monkeypatch.setattr(server_module, "providers", _Registry(providers_mapping), raising=False)
+    monkeypatch.setattr(server_module, "guards", _Registry(guards_mapping), raising=False)
+
+    client = TestClient(app)
+    body = {
+        "model": "gpt-4.1-mini",
+        "messages": [{"role": "user", "content": "hi"}],
+        "stream": True,
+    }
+
+    with client.stream("POST", "/v1/chat/completions", json=body) as response:
+        content = "".join(response.iter_text())
+        status_code = response.status_code
+
+    assert status_code == 502
+    payload = json.loads(content)
+    assert payload["error"]["message"] == "boom"
+    assert payload["error"]["type"] == "provider_server_error"
+    assert planner_mock.plan.called
+    planner_mock.record_failure.assert_called_once_with("frontier_primary")
+    planner_mock.record_success.assert_not_called()
