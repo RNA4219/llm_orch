@@ -1,3 +1,4 @@
+import json
 import sys
 from pathlib import Path
 from typing import Any, Callable
@@ -44,6 +45,14 @@ def _successful_stream(*_args: Any, **_kwargs: Any) -> Any:
     async def _generator() -> Any:
         yield {"event": "message", "data": {"id": "1"}}
         yield {"event": "message", "data": {"id": "2"}}
+
+    return _generator()
+
+
+def _partial_http_error_stream(*_args: Any, **_kwargs: Any) -> Any:
+    async def _generator() -> Any:
+        yield {"event": "message", "data": {"id": "1"}}
+        raise _http_status_error(502)
 
     return _generator()
 
