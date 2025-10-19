@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
 import sys
 import time
@@ -126,3 +127,68 @@ def test_reload_configuration_replaces_runtime_state(
     assert server_module.planner.providers["dummy"].base_url == "http://updated"
     guard_after = server_module.guards.get("dummy")
     assert guard_after.sem._value == 2
+
+
+def test_config_refresh_loop_reloads_when_planner_requests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sys.modules.pop("src.orch.server", None)
+    importlib.invalidate_caches()
+    server_module = importlib.import_module("src.orch.server")
+
+    monkeypatch.setattr(server_module, "CONFIG_REFRESH_INTERVAL", 0.0, raising=False)
+
+    class DummyProviders:
+        def __init__(self, label: str) -> None:
+            self._label = label
+
+        def get(self, name: str) -> tuple[str, str]:
+            return name, self._label
+
+    event = asyncio.Event()
+    reload_calls = 0
+
+    class DummyPlanner:
+        def __init__(self, label: str, *, trigger_reload: bool) -> None:
+            self.label = label
+            self.trigger_reload = trigger_reload
+            self.calls = 0
+
+        def refresh(self) -> bool:
+            self.calls += 1
+            if self.trigger_reload:
+                if self.calls > 1:
+                    pytest.fail("stale planner used after reload")
+                return True
+            event.set()
+            return False
+
+    initial_planner = DummyPlanner("initial", trigger_reload=True)
+    updated_planner = DummyPlanner("updated", trigger_reload=False)
+
+    monkeypatch.setattr(server_module, "providers", DummyProviders("before"), raising=False)
+    monkeypatch.setattr(server_module, "planner", initial_planner, raising=False)
+
+    def fake_reload_configuration() -> None:
+        nonlocal reload_calls
+        reload_calls += 1
+        server_module.providers = DummyProviders("after")
+        server_module.planner = updated_planner
+
+    monkeypatch.setattr(server_module, "reload_configuration", fake_reload_configuration)
+
+    async def _run_loop() -> None:
+        task = asyncio.create_task(server_module._config_refresh_loop())
+        try:
+            await asyncio.wait_for(event.wait(), timeout=1.0)
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    asyncio.run(_run_loop())
+
+    assert reload_calls == 1
+    assert server_module.planner is updated_planner
+    assert updated_planner.calls >= 1
+    assert server_module.providers.get("dummy") == ("dummy", "after")
