@@ -153,7 +153,10 @@ if ALLOWED_ORIGINS:
 async def _config_refresh_loop() -> None:
     try:
         while True:
-            planner.refresh()
+            current_planner = planner
+            needs_reload = current_planner.refresh()
+            if needs_reload:
+                reload_configuration()
             await asyncio.sleep(CONFIG_REFRESH_INTERVAL if CONFIG_REFRESH_INTERVAL > 0 else 0)
     except asyncio.CancelledError:
         raise
