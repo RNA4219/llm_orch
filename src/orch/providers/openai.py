@@ -401,32 +401,39 @@ class OpenAICompatProvider(BaseProvider):
                 retry_after = self._parse_retry_after(response.headers.get("retry-after"))
                 data_lines: list[str] = []
                 event_name: str | None = None
+
+                def finalize_event() -> ProviderStreamChunkModel | None:
+                    nonlocal event_name
+                    if not data_lines:
+                        event_name = None
+                        return None
+                    data_text = "\n".join(data_lines)
+                    data_lines.clear()
+                    if not data_text or data_text == "[DONE]":
+                        event_name = None
+                        return None
+                    try:
+                        payload_data = json.loads(data_text)
+                    except json.JSONDecodeError:
+                        event_name = None
+                        return None
+                    if not isinstance(payload_data, dict):
+                        event_name = None
+                        return None
+                    chunk = self._map_stream_payload(
+                        payload_data,
+                        event_name=event_name,
+                        retry_after=retry_after,
+                    )
+                    event_name = None
+                    return chunk
+
                 async for raw_line in response.aiter_lines():
                     if raw_line is None:
                         continue
                     line = raw_line.strip("\r")
                     if line == "":
-                        if not data_lines:
-                            event_name = None
-                            continue
-                        data_text = "\n".join(data_lines)
-                        data_lines.clear()
-                        if data_text == "[DONE]":
-                            break
-                        try:
-                            payload_data = json.loads(data_text)
-                        except json.JSONDecodeError:
-                            event_name = None
-                            continue
-                        if not isinstance(payload_data, dict):
-                            event_name = None
-                            continue
-                        chunk = self._map_stream_payload(
-                            payload_data,
-                            event_name=event_name,
-                            retry_after=retry_after,
-                        )
-                        event_name = None
+                        chunk = finalize_event()
                         if chunk is not None:
                             yield chunk
                         continue
@@ -437,20 +444,14 @@ class OpenAICompatProvider(BaseProvider):
                         event_name = event_value or None
                         continue
                     if line.startswith("data:"):
-                        data_lines.append(line[5:].lstrip())
-                        continue
-                if data_lines:
-                    data_text = "\n".join(data_lines)
-                    if data_text and data_text != "[DONE]":
-                        try:
-                            payload_data = json.loads(data_text)
-                        except json.JSONDecodeError:
-                            return
-                        if isinstance(payload_data, dict):
-                            chunk = self._map_stream_payload(
-                                payload_data,
-                                event_name=event_name,
-                                retry_after=retry_after,
-                            )
+                        data_value = line[5:].lstrip()
+                        if data_value == "[DONE]":
+                            chunk = finalize_event()
                             if chunk is not None:
                                 yield chunk
+                            break
+                        data_lines.append(data_value)
+                        continue
+                chunk = finalize_event()
+                if chunk is not None:
+                    yield chunk
