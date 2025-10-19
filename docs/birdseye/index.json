@@ -1,5 +1,5 @@
 {
-  "generated_at": "2025-10-18T16:35:55Z",
+  "generated_at": "2025-10-19T14:01:37Z",
   "nodes": {
     "src/orch/server.py": {
       "role": "entrypoint",
@@ -15,11 +15,29 @@
       "role": "application",
       "caps": "docs/birdseye/caps/src.orch.providers.__init__.py.json",
       "mtime": "2025-10-18T16:35:55Z"
+    },
+    "src/orch/rate_limiter.py": {
+      "role": "infrastructure",
+      "caps": "docs/birdseye/caps/src.orch.rate_limiter.py.json",
+      "mtime": "2025-10-19T14:01:37Z"
     }
   },
   "edges": [
-    ["src/orch/server.py", "src/orch/router.py"],
-    ["src/orch/server.py", "src/orch/providers/__init__.py"],
-    ["src/orch/router.py", "src/orch/providers/__init__.py"]
+    [
+      "src/orch/server.py",
+      "src/orch/router.py"
+    ],
+    [
+      "src/orch/server.py",
+      "src/orch/providers/__init__.py"
+    ],
+    [
+      "src/orch/router.py",
+      "src/orch/providers/__init__.py"
+    ],
+    [
+      "src/orch/server.py",
+      "src/orch/rate_limiter.py"
+    ]
   ]
 }
