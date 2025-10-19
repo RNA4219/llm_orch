@@ -630,7 +630,9 @@ async def _stream_chat_response(
                     if key not in {"event", "event_type"}
                 }
         else:
-            event_name = getattr(raw_event, "event_type", None)
+            event_name = getattr(raw_event, "event_type", None) or getattr(
+                raw_event, "event", None
+            )
             data_field = raw_event
 
         if not isinstance(event_name, str):
@@ -684,6 +686,7 @@ async def _stream_chat_response(
         if isinstance(data_field, dict):
             data_field = dict(data_field)
             data_field.pop("event_type", None)
+            data_field.pop("event", None)
             data_field.pop("raw", None)
 
         if is_terminal:

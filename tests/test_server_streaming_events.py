@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable
 
@@ -134,6 +135,43 @@ def test_streaming_dict_events_are_mapped(monkeypatch: MonkeyPatch) -> None:
         if data_text == "":
             continue
         parsed = json.loads(data_text)
+        if name == "done":
+            assert parsed == {}
+        else:
+            assert "event_type" not in parsed
+            assert "raw" not in parsed
+
+
+def test_streaming_dataclass_events_use_event_field(monkeypatch: MonkeyPatch) -> None:
+    @dataclass
+    class _Chunk:
+        event_type: str | None = None
+        event: str | None = None
+        delta: dict[str, Any] | None = None
+        usage: dict[str, int] | None = None
+        finish_reason: str | None = None
+        raw: dict[str, Any] | None = None
+
+    async def _stream(*_args: Any, **_kwargs: Any) -> AsyncIterator[_Chunk]:
+        yield _Chunk(event_type="message_start", delta={"role": "assistant"}, raw={"ignored": True})
+        yield _Chunk(event_type="delta", delta={"content": "Hel"})
+        yield _Chunk(event_type="usage", usage={"prompt_tokens": 2, "completion_tokens": 1})
+        yield _Chunk(event="response.completed", finish_reason="stop")
+
+    events = _collect_sse_events(monkeypatch, _stream)
+
+    named_events = [item for item in events if item[0]]
+    assert [name for name, _ in named_events] == [
+        "chat.completion.chunk",
+        "chat.completion.chunk",
+        "telemetry.usage",
+        "done",
+    ]
+
+    assert events[-1] == (None, "[DONE]")
+
+    for name, data_text in named_events:
+        parsed = json.loads(data_text) if data_text else {}
         if name == "done":
             assert parsed == {}
         else:
