@@ -88,6 +88,22 @@ routes:
     return tmp_path
 
 
+def _write_single_provider_router(route_test_config: Path) -> None:
+    router_file = route_test_config / "router.yaml"
+    router_file.write_text(
+        """
+defaults:
+  temperature: 0.2
+  max_tokens: 64
+  task_header: "x-orch-task-kind"
+  task_header_value: "PLAN"
+routes:
+  PLAN:
+    primary: dummy
+""".strip()
+    )
+
+
 def test_route_planner_skips_provider_after_consecutive_failures(
     route_test_config: Path,
 ) -> None:
@@ -613,6 +629,7 @@ def test_chat_releases_guard_usage_on_provider_exception(
     exception_factory: Callable[[], Exception],
     expected_status: int,
 ) -> None:
+    _write_single_provider_router(route_test_config)
     app = load_app("1")
     server_module = sys.modules["src.orch.server"]
 
@@ -775,6 +792,7 @@ def test_chat_streams_events(
 def test_chat_stream_guard_uses_prompt_estimate_and_cancels_reservation(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _write_single_provider_router(route_test_config)
     app = load_app("1")
     server_module = sys.modules["src.orch.server"]
 
@@ -941,6 +959,7 @@ def test_chat_stream_rate_limit_retry_after(
     retry_after_seconds: int,
     use_http_date: bool,
 ) -> None:
+    _write_single_provider_router(route_test_config)
     app = load_app("1")
     server_module = sys.modules["src.orch.server"]
     header_value = str(retry_after_seconds)
@@ -1911,6 +1930,7 @@ rpm = 60
 concurrency = 1
 """.strip()
     )
+    _write_single_provider_router(route_test_config)
 
     app = load_app("1")
     server_module = sys.modules["src.orch.server"]
@@ -1964,6 +1984,7 @@ rpm = 60
 concurrency = 1
 """.strip()
     )
+    _write_single_provider_router(route_test_config)
 
     app = load_app("1")
     server_module = sys.modules["src.orch.server"]
@@ -1998,6 +2019,7 @@ concurrency = 1
 def test_chat_metrics_records_status_bad_gateway_on_total_failure(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _write_single_provider_router(route_test_config)
     app = load_app("1")
     server_module = sys.modules["src.orch.server"]
     records = capture_metric_records(server_module, monkeypatch)
@@ -2042,6 +2064,7 @@ rpm = 60
 concurrency = 1
 """.strip()
     )
+    _write_single_provider_router(route_test_config)
 
     app = load_app("1")
     server_module = sys.modules["src.orch.server"]
@@ -2325,6 +2348,7 @@ def test_chat_metrics_routing_error_usage_zero(
 def test_chat_metrics_provider_error_includes_req_id(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _write_single_provider_router(route_test_config)
     app = load_app("1")
     server_module = sys.modules["src.orch.server"]
     records = capture_metric_records(server_module, monkeypatch)
@@ -2356,6 +2380,7 @@ def test_chat_metrics_provider_error_includes_req_id(
 def test_chat_metrics_provider_error_usage_zero(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _write_single_provider_router(route_test_config)
     app = load_app("1")
     server_module = sys.modules["src.orch.server"]
     records = capture_metric_records(server_module, monkeypatch)
@@ -2391,6 +2416,7 @@ def test_chat_metrics_provider_error_usage_zero(
 def test_chat_metrics_provider_error_records_status_502(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _write_single_provider_router(route_test_config)
     app = load_app("1")
     server_module = sys.modules["src.orch.server"]
     records = capture_metric_records(server_module, monkeypatch)
