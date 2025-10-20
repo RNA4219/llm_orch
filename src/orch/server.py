@@ -689,18 +689,7 @@ async def _stream_chat_response(
             headers=headers,
         )
 
-    max_tokens_option = provider_kwargs.get("max_tokens")
-    max_tokens = (
-        max_tokens_option
-        if isinstance(max_tokens_option, int) and max_tokens_option > 0
-        else cfg.router.defaults.max_tokens
-    )
-    estimated_prompt_tokens = _estimate_prompt_tokens(
-        normalized_messages,
-        max_tokens,
-    )
-
-    def _encode_event(raw_event: Any) -> bytes:
+    def _normalize_event(raw_event: Any) -> tuple[str | None, Any, bool]:
         def _extract_event(source: Any) -> tuple[str | None, Any]:
             if isinstance(source, dict):
                 name = source.get("event") or source.get("event_type")
@@ -773,6 +762,9 @@ async def _stream_chat_response(
         if is_terminal:
             payload = {}
 
+        return mapped_event, payload, is_terminal
+
+    def _encode_normalized(mapped_event: str | None, payload: Any) -> bytes:
         if isinstance(payload, bytes):
             data_text = payload.decode("utf-8", errors="ignore")
         elif isinstance(payload, str):
@@ -829,6 +821,35 @@ async def _stream_chat_response(
         except KeyError:
             guard = None
         queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
+        usage_prompt_tokens = usage_completion_tokens = 0
+        usage_recorded = False
+        guard_lease: object | None = None
+        def _handle_usage_event(normalized: tuple[str | None, Any, bool]) -> None:
+            nonlocal usage_prompt_tokens, usage_completion_tokens, usage_recorded, guard_lease
+            event_name, payload, _ = normalized
+            if event_name != "telemetry.usage" or not isinstance(payload, dict):
+                return
+            usage_payload = payload.get("usage")
+            data = usage_payload if isinstance(usage_payload, dict) else payload
+            if not isinstance(data, dict):
+                return
+            prompt_value = data.get("prompt_tokens")
+            if isinstance(prompt_value, int) and prompt_value > usage_prompt_tokens:
+                usage_prompt_tokens = prompt_value
+            completion_value = data.get("completion_tokens")
+            if isinstance(completion_value, int) and completion_value > usage_completion_tokens:
+                usage_completion_tokens = completion_value
+            if (
+                guard_lease is not None
+                and not usage_recorded
+                and (isinstance(prompt_value, int) or isinstance(completion_value, int))
+            ):
+                guard.record_usage(
+                    guard_lease,
+                    usage_prompt_tokens=usage_prompt_tokens,
+                    usage_completion_tokens=usage_completion_tokens,
+                )
+                usage_recorded = True
 
         async def _write_metrics(
             *,
@@ -849,8 +870,8 @@ async def _stream_chat_response(
                 "ok": ok,
                 "status": status,
                 "retries": retries,
-                "usage_prompt": 0,
-                "usage_completion": 0,
+                "usage_prompt": usage_prompt_tokens,
+                "usage_completion": usage_completion_tokens,
             }
             if error is not None:
                 record["error"] = error
@@ -859,11 +880,10 @@ async def _stream_chat_response(
             await _log_metrics(record)
 
         async def producer() -> None:
+            nonlocal guard_lease
             try:
-                async with _guard_context(
-                    guard,
-                    estimated_prompt_tokens=estimated_prompt_tokens,
-                ):
+                async with guard as lease:
+                    guard_lease = lease
                     stream_iter = provider.chat_stream(
                         model,
                         normalized_messages,
@@ -935,9 +955,15 @@ async def _stream_chat_response(
                         )
                         return
                     if first_event is not None:
-                        await queue.put(("data", _encode_event(first_event)))
+                        normalized_first = _normalize_event(first_event)
+                        _handle_usage_event(normalized_first)
+                        mapped, payload, _ = normalized_first
+                        await queue.put(("data", _encode_normalized(mapped, payload)))
                     async for raw_event in stream_iter:
-                        await queue.put(("data", _encode_event(raw_event)))
+                        normalized_event = _normalize_event(raw_event)
+                        _handle_usage_event(normalized_event)
+                        mapped, payload, _ = normalized_event
+                        await queue.put(("data", _encode_normalized(mapped, payload)))
                     planner.record_success(provider_name)
                     await _write_metrics(
                         ok=True,
@@ -974,6 +1000,8 @@ async def _stream_chat_response(
                         },
                     )
                 )
+            finally:
+                guard_lease = None
 
         producer_task = asyncio.create_task(producer())
         first_kind, first_payload = await queue.get()
