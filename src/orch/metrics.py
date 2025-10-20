@@ -12,6 +12,7 @@ import json
 import os
 import threading
 import time
+from collections import defaultdict
 from typing import Any, ClassVar, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -20,6 +21,14 @@ if TYPE_CHECKING:  # pragma: no cover
 _TRUTHY = {"1", "true", "yes", "on"}
 _FALSY = {"0", "false", "no", "off"}
 _FLAG = "ORCH_OTEL_METRICS_EXPORT"
+_MODE_FLAG = "ORCH_METRICS_EXPORT_MODE"
+_PROM_FILE = "prometheus.prom"
+_PROM_MODE = "prom"
+_OTEL_MODE = "otel"
+_BOTH_MODE = "both"
+_MODE_VALUES = {_PROM_MODE, _OTEL_MODE, _BOTH_MODE}
+_DEFAULT_MODE = _PROM_MODE
+_HISTOGRAM_BUCKETS: tuple[float, ...] = (0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0)
 
 
 def _env_var_as_bool(name: str, *, default: bool = False) -> bool:
@@ -34,6 +43,95 @@ def _env_var_as_bool(name: str, *, default: bool = False) -> bool:
     if normalized in _FALSY:
         return False
     return default
+
+
+def _metrics_mode_from_env() -> str:
+    raw = os.environ.get(_MODE_FLAG)
+    if raw is not None:
+        normalized = raw.strip().lower()
+        if normalized in _MODE_VALUES:
+            return normalized
+    if _env_var_as_bool(_FLAG):
+        return _BOTH_MODE
+    return _DEFAULT_MODE
+
+
+def _mode_includes_prom(mode: str) -> bool:
+    return mode in (_PROM_MODE, _BOTH_MODE)
+
+
+def _mode_includes_otel(mode: str) -> bool:
+    return mode in (_OTEL_MODE, _BOTH_MODE)
+
+
+def _new_histogram_state() -> dict[str, Any]:
+    return {"buckets": [0] * (len(_HISTOGRAM_BUCKETS) + 1), "count": 0, "sum": 0.0}
+
+
+class _PromMetrics:
+    __slots__ = ("_dir", "_lock", "_counter", "_histogram")
+
+    def __init__(self, dirpath: str) -> None:
+        self._dir = dirpath
+        self._lock = threading.Lock()
+        self._counter: defaultdict[tuple[str, str, str], int] = defaultdict(int)
+        self._histogram: defaultdict[tuple[str, str], dict[str, Any]] = defaultdict(_new_histogram_state)
+
+    def record(self, payload: dict[str, Any]) -> None:
+        provider = str(payload.get("provider") or "unknown")
+        status = str(payload.get("status") or "0")
+        ok_label = "true" if bool(payload.get("ok")) else "false"
+        latency_seconds = max(float(payload.get("latency_ms") or 0.0) / 1000.0, 0.0)
+
+        with self._lock:
+            self._counter[(provider, status, ok_label)] += 1
+            hist_state = self._histogram[(provider, ok_label)]
+            buckets = hist_state["buckets"]
+            for idx, bound in enumerate(_HISTOGRAM_BUCKETS):
+                if latency_seconds <= bound:
+                    buckets[idx] += 1
+            buckets[-1] += 1
+            hist_state["count"] += 1
+            hist_state["sum"] += latency_seconds
+            self._write_locked()
+
+    def _render_locked(self) -> str:
+        lines: list[str] = [
+            "# HELP orch_requests_total Total number of orchestrator requests",
+            "# TYPE orch_requests_total counter",
+        ]
+        for (provider, status, ok_label), value in sorted(self._counter.items()):
+            lines.append(
+                f'orch_requests_total{{provider="{provider}",status="{status}",ok="{ok_label}"}} {value}'
+            )
+        lines.append("# HELP orch_request_latency_seconds Request latency for orchestrated requests")
+        lines.append("# TYPE orch_request_latency_seconds histogram")
+        for (provider, ok_label), state in sorted(self._histogram.items()):
+            buckets = state["buckets"]
+            for idx, bound in enumerate(_HISTOGRAM_BUCKETS):
+                le_value = format(bound, ".6g")
+                count = buckets[idx]
+                lines.append(
+                    f'orch_request_latency_seconds_bucket{{provider="{provider}",ok="{ok_label}",le="{le_value}"}} {count}'
+                )
+            lines.append(
+                f'orch_request_latency_seconds_bucket{{provider="{provider}",ok="{ok_label}",le="+Inf"}} {buckets[-1]}'
+            )
+            lines.append(
+                f'orch_request_latency_seconds_count{{provider="{provider}",ok="{ok_label}"}} {state["count"]}'
+            )
+            lines.append(
+                f'orch_request_latency_seconds_sum{{provider="{provider}",ok="{ok_label}"}} {state["sum"]}'
+            )
+        return "\n".join(lines) + "\n"
+
+    def _write_locked(self) -> None:
+        os.makedirs(self._dir, exist_ok=True)
+        prom_path = os.path.join(self._dir, _PROM_FILE)
+        tmp_path = f"{prom_path}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as handle:
+            handle.write(self._render_locked())
+        os.replace(tmp_path, prom_path)
 
 
 class _OtelMetrics:
@@ -104,7 +202,9 @@ class MetricsLogger:
         self.dir = dirpath
         os.makedirs(self.dir, exist_ok=True)
         self._lock: Optional[asyncio.Lock] = None
-        self._otel = self._ensure_otel()
+        self._mode = _metrics_mode_from_env()
+        self._prom = _PromMetrics(self.dir) if _mode_includes_prom(self._mode) else None
+        self._otel = self._ensure_otel(self._mode)
 
     @classmethod
     def configure_metric_reader(cls, reader: Optional["MetricReader"]) -> None:
@@ -116,8 +216,9 @@ class MetricsLogger:
             cls._otel_error = False
 
     @classmethod
-    def _ensure_otel(cls) -> Optional[_OtelMetrics]:
-        if not _env_var_as_bool(_FLAG):
+    def _ensure_otel(cls, mode: str | None = None) -> Optional[_OtelMetrics]:
+        current_mode = mode or _metrics_mode_from_env()
+        if not _mode_includes_otel(current_mode):
             return None
         with cls._otel_lock:
             if cls._otel_instance is not None:
@@ -140,11 +241,14 @@ class MetricsLogger:
         async with self._lock:
             with open(self._file(), "a", encoding="utf-8") as handle:
                 handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-        otel = self._otel or self._ensure_otel()
+        otel = self._otel or self._ensure_otel(self._mode)
         if otel is not None:
             otel.record(record)
+        prom = self._prom
+        if prom is not None:
+            prom.record(record)
 
     async def flush(self) -> None:
-        otel = self._otel or self._ensure_otel()
+        otel = self._otel or self._ensure_otel(self._mode)
         if otel is not None:
             await otel.flush()
