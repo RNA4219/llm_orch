@@ -134,7 +134,11 @@ def _apply_provider_aliases(
     provider_defs: dict[str, ProviderDef],
     registry: ProviderRegistry,
     guard_registry: ProviderGuards,
+    *,
+    enabled: bool,
 ) -> None:
+    if not enabled:
+        return
     aliases = _build_alias_map(provider_defs)
     if not aliases:
         return
@@ -187,7 +191,7 @@ def _estimate_prompt_tokens(messages: list[dict[str, Any]], fallback: int) -> in
 cfg = load_config(CONFIG_DIR, use_dummy=USE_DUMMY)
 providers = ProviderRegistry(cfg.providers)
 guards = ProviderGuards(cfg.providers)
-_apply_provider_aliases(cfg.providers, providers, guards)
+_apply_provider_aliases(cfg.providers, providers, guards, enabled=USE_DUMMY)
 planner = RoutePlanner(
     cfg.router,
     cfg.providers,
@@ -249,7 +253,7 @@ def reload_configuration() -> None:
     cfg = new_cfg
     providers = ProviderRegistry(new_cfg.providers)
     guards = ProviderGuards(new_cfg.providers)
-    _apply_provider_aliases(new_cfg.providers, providers, guards)
+    _apply_provider_aliases(new_cfg.providers, providers, guards, enabled=USE_DUMMY)
     planner = RoutePlanner(
         new_cfg.router,
         new_cfg.providers,
