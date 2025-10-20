@@ -687,7 +687,7 @@ def test_chat_releases_guard_usage_on_provider_exception(
     assert bucket._total == 0
 
 
-def test_chat_failure_response_includes_orch_headers_after_fallback(
+def test_chat_failure_response_includes_orch_headers_when_guard_blocks_fallback(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     app = load_app("1")
@@ -704,9 +704,10 @@ def test_chat_failure_response_includes_orch_headers_after_fallback(
     route = SimpleNamespace(primary="primary", fallback=["fallback"])
     monkeypatch.setattr(server_module.planner, "plan", lambda _task, *, sticky_key=None: route)
 
-    failure = AsyncMock(side_effect=RuntimeError("boom"))
-    primary_provider = SimpleNamespace(model="primary-model", chat=failure)
-    fallback_provider = SimpleNamespace(model="fallback-model", chat=failure)
+    primary_failure = AsyncMock(side_effect=RuntimeError("boom"))
+    fallback_failure = AsyncMock(side_effect=RuntimeError("boom"))
+    primary_provider = SimpleNamespace(model="primary-model", chat=primary_failure)
+    fallback_provider = SimpleNamespace(model="fallback-model", chat=fallback_failure)
     monkeypatch.setitem(server_module.providers.providers, "primary", primary_provider)
     monkeypatch.setitem(server_module.providers.providers, "fallback", fallback_provider)
 
@@ -717,7 +718,8 @@ def test_chat_failure_response_includes_orch_headers_after_fallback(
     )
 
     assert response.status_code == 502
-    assert_orch_headers(response, provider="fallback", fallback_attempts="1")
+    assert_orch_headers(response, provider="primary", fallback_attempts="0")
+    assert fallback_failure.call_count == 0
 
 
 def test_chat_failure_response_includes_headers_for_unroutable_task(

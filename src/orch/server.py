@@ -585,6 +585,8 @@ async def chat_completions(req: Request, body: ChatRequest):
     abort_error_type: str | None = None
     abort_retry_after: int | None = None
     for provider_name in [route.primary] + route.fallback:
+        if attempt_count >= MAX_PROVIDER_ATTEMPTS:
+            break
         try:
             prov = providers.get(provider_name)
         except KeyError:
@@ -593,7 +595,10 @@ async def chat_completions(req: Request, body: ChatRequest):
             guard = guards.get(provider_name)
         except (AssertionError, KeyError):
             continue
+        should_abort = False
         for attempt in range(1, MAX_PROVIDER_ATTEMPTS + 1):
+            if attempt_count >= MAX_PROVIDER_ATTEMPTS:
+                break
             should_abort = False
             async with guard.acquire(
                 estimated_prompt_tokens=estimated_prompt_tokens
@@ -679,10 +684,17 @@ async def chat_completions(req: Request, body: ChatRequest):
                 abort_processing = True
                 break
 
-            if attempt < MAX_PROVIDER_ATTEMPTS:
+            if (
+                attempt < MAX_PROVIDER_ATTEMPTS
+                and attempt_count < MAX_PROVIDER_ATTEMPTS
+            ):
                 await asyncio.sleep(min(0.25 * attempt, 2.0))  # simple backoff
 
-        if success_record is not None or abort_processing:
+        if (
+            success_record is not None
+            or abort_processing
+            or attempt_count >= MAX_PROVIDER_ATTEMPTS
+        ):
             break
 
     if success_response is not None and success_record is not None:
