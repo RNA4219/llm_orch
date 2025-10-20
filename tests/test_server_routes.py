@@ -7,7 +7,7 @@ import sys
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, Mock
 
@@ -476,6 +476,115 @@ def test_chat_streams_events(
     body = response.text
     assert "\"delta\"" in body
     assert "data: [DONE]" in body
+
+
+def test_chat_stream_guard_uses_prompt_estimate_and_cancels_reservation(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+
+    from src.orch.rate_limiter import Guard
+
+    class TrackingGuard(Guard):
+        def __init__(self) -> None:
+            super().__init__(rpm=60, concurrency=1, tpm=128)
+            self.acquire_calls: list[int] = []
+            self.record_usage_calls: list[tuple[int, int]] = []
+
+        def acquire(self, *, estimated_prompt_tokens: int):
+            self.acquire_calls.append(estimated_prompt_tokens)
+            return super().acquire(estimated_prompt_tokens=estimated_prompt_tokens)
+
+        def record_usage(
+            self,
+            lease: object,
+            *,
+            usage_prompt_tokens: int,
+            usage_completion_tokens: int,
+        ) -> float:
+            self.record_usage_calls.append(
+                (usage_prompt_tokens, usage_completion_tokens)
+            )
+            return super().record_usage(
+                lease,
+                usage_prompt_tokens=usage_prompt_tokens,
+                usage_completion_tokens=usage_completion_tokens,
+            )
+
+    tracking_guard = TrackingGuard()
+
+    bucket = tracking_guard._tpm_bucket
+    assert bucket is not None
+
+    reserve_calls: list[int] = []
+    cancel_calls: list[int | None] = []
+
+    original_reserve = bucket.reserve
+
+    def reserve_wrapper(self: object, tokens: int, now: float):
+        reserve_calls.append(tokens)
+        return original_reserve(tokens, now)
+
+    monkeypatch.setattr(
+        bucket, "reserve", MethodType(reserve_wrapper, bucket)
+    )
+
+    original_cancel = bucket.cancel
+
+    def cancel_wrapper(self: object, reservation_id: int | None, now: float):
+        cancel_calls.append(reservation_id)
+        return original_cancel(reservation_id, now)
+
+    monkeypatch.setattr(
+        bucket, "cancel", MethodType(cancel_wrapper, bucket)
+    )
+
+    class MockProviderGuards:
+        def get(self, name: str) -> Guard:
+            assert name == "dummy"
+            return tracking_guard
+
+    monkeypatch.setattr(server_module, "guards", MockProviderGuards(), raising=False)
+
+    async def stream_chat(*_: object, **__: object):
+        yield {"event": "chunk", "data": {"choices": [{"delta": {"content": "hi"}}]}}
+        yield {"event": "done", "data": {}}
+
+    class MockProvider:
+        model = "dummy"
+
+        async def chat_stream(self, *args: object, **kwargs: object):
+            async for item in stream_chat(*args, **kwargs):
+                yield item
+
+    monkeypatch.setitem(
+        server_module.providers.providers,
+        "dummy",
+        MockProvider(),
+    )
+
+    client = TestClient(app)
+    messages = [{"role": "user", "content": "hi"}]
+    body = {
+        "model": "dummy",
+        "messages": messages,
+        "max_tokens": 64,
+        "stream": True,
+    }
+    expected_estimate = server_module._estimate_prompt_tokens(
+        messages, body["max_tokens"]
+    )
+
+    response = client.post("/v1/chat/completions", json=body)
+
+    assert response.status_code == 200
+    assert tracking_guard.acquire_calls == [expected_estimate]
+    assert reserve_calls == [expected_estimate]
+    assert cancel_calls
+    assert cancel_calls[0] is not None
+    assert tracking_guard.record_usage_calls == []
+    assert bucket._total == 0
 
 
 def test_chat_streams_provider_chunk_events(
