@@ -4,6 +4,8 @@ import os
 import time
 import uuid
 from collections import defaultdict
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -598,6 +600,31 @@ async def chat_completions(req: Request, body: ChatRequest):
     )
 
 
+@asynccontextmanager
+async def _guard_context(
+    guard: Any | None,
+    *,
+    estimated_prompt_tokens: int,
+) -> AsyncIterator[Any]:
+    if guard is None:
+        yield None
+        return
+    acquire = getattr(guard, "acquire", None)
+    if callable(acquire):
+        try:
+            context = acquire(estimated_prompt_tokens=estimated_prompt_tokens)
+        except TypeError:
+            context = acquire()
+        async with context as lease:
+            yield lease
+            return
+    if hasattr(guard, "__aenter__") and hasattr(guard, "__aexit__"):
+        async with guard as lease:
+            yield lease
+            return
+    yield None
+
+
 async def _stream_chat_response(
     *,
     model: str,
@@ -619,6 +646,17 @@ async def _stream_chat_response(
             status_code=400,
             headers=headers,
         )
+
+    max_tokens_option = provider_kwargs.get("max_tokens")
+    max_tokens = (
+        max_tokens_option
+        if isinstance(max_tokens_option, int) and max_tokens_option > 0
+        else cfg.router.defaults.max_tokens
+    )
+    estimated_prompt_tokens = _estimate_prompt_tokens(
+        normalized_messages,
+        max_tokens,
+    )
 
     def _encode_event(raw_event: Any) -> bytes:
         def _extract_event(source: Any) -> tuple[str | None, Any]:
@@ -744,7 +782,10 @@ async def _stream_chat_response(
             last_error_type = "provider_error"
             last_retry_after = None
             continue
-        guard = guards.get(provider_name)
+        try:
+            guard = guards.get(provider_name)
+        except KeyError:
+            guard = None
         queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
 
         async def _write_metrics(
@@ -777,9 +818,10 @@ async def _stream_chat_response(
 
         async def producer() -> None:
             try:
-                async with guard.acquire(
-                    estimated_prompt_tokens=estimated_prompt_tokens
-                ) as _lease:
+                async with _guard_context(
+                    guard,
+                    estimated_prompt_tokens=estimated_prompt_tokens,
+                ):
                     stream_iter = provider.chat_stream(
                         model,
                         normalized_messages,
