@@ -36,6 +36,144 @@ curl -s -H "Content-Type: application/json" \
   http://localhost:31001/v1/chat/completions | jq .
 ```
 
+### Stickyヘッダ付きクライアント例
+
+#### 共通リクエストペイロード
+
+<!-- schema: ChatRequest -->
+```json
+{
+  "model": "dummy",
+  "messages": [
+    {"role": "system", "content": "You are llm-orch demo."},
+    {"role": "user", "content": "Hello from README"}
+  ],
+  "stream": false
+}
+```
+
+#### curl（Stickyヘッダ）
+
+```bash
+cat <<'JSON' > request.json
+{
+  "model": "dummy",
+  "messages": [
+    {"role": "system", "content": "You are llm-orch demo."},
+    {"role": "user", "content": "Hello from README"}
+  ],
+  "stream": false
+}
+JSON
+
+curl -sSf -H "Content-Type: application/json" \
+  -H "X-Orch-Sticky-Key: demo-session" \
+  -d @request.json \
+  http://localhost:31001/v1/chat/completions | jq .
+```
+
+#### Python（httpx SDK）
+
+```python
+from __future__ import annotations
+
+import asyncio
+from typing import Any
+
+import httpx
+
+REQUEST_PAYLOAD: dict[str, Any] = {
+    "model": "dummy",
+    "messages": [
+        {"role": "system", "content": "You are llm-orch demo."},
+        {"role": "user", "content": "Hello from README"},
+    ],
+    "stream": False,
+}
+
+
+async def main() -> None:
+    async with httpx.AsyncClient(base_url="http://localhost:31001") as client:
+        response = await client.post(
+            "/v1/chat/completions",
+            json=REQUEST_PAYLOAD,
+            headers={"X-Orch-Sticky-Key": "demo-session"},
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        print(response.json())
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+#### JavaScript（Fetch API）
+
+```javascript
+const payload = {
+  model: "dummy",
+  messages: [
+    { role: "system", content: "You are llm-orch demo." },
+    { role: "user", content: "Hello from README" }
+  ],
+  stream: false
+};
+
+const response = await fetch("http://localhost:31001/v1/chat/completions", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "X-Orch-Sticky-Key": "demo-session"
+  },
+  body: JSON.stringify(payload)
+});
+
+if (!response.ok) {
+  throw new Error(`Request failed: ${response.status}`);
+}
+
+const body = await response.json();
+console.log(body);
+```
+
+#### ストリーミング受信例
+
+<!-- schema: ChatRequest -->
+```json
+{
+  "model": "dummy",
+  "messages": [
+    {"role": "system", "content": "You are llm-orch demo."},
+    {"role": "user", "content": "Stream please"}
+  ],
+  "stream": true
+}
+```
+
+```bash
+cat <<'JSON' > stream.json
+{
+  "model": "dummy",
+  "messages": [
+    {"role": "system", "content": "You are llm-orch demo."},
+    {"role": "user", "content": "Stream please"}
+  ],
+  "stream": true
+}
+JSON
+
+curl -sN -H "Content-Type: application/json" \
+  -H "X-Orch-Sticky-Key: demo-session" \
+  -d @stream.json \
+  http://localhost:31001/v1/chat/completions | while IFS= read -r line; do
+    printf '%s\n' "$line"
+    if [[ "$line" == data:\ \[DONE\] ]]; then
+      break
+    fi
+  done
+```
+
 ## 設定
 
 - `config/providers.toml` : プロバイダ定義（`type` / `base_url` / `model` / `auth_env` / `rpm` / `tpm` / `concurrency`）
