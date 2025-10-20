@@ -478,6 +478,76 @@ def test_chat_streams_events(
     assert "data: [DONE]" in body
 
 
+def test_chat_streams_guard_estimates_and_usage_commit(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+    from src.orch.types import ProviderStreamChoice, ProviderStreamChunk
+    usage_payload = {"prompt_tokens": 84, "completion_tokens": 21}
+    async def stream_chat(*_: object, **__: object):
+        yield ProviderStreamChunk(
+            choices=[ProviderStreamChoice(delta={"content": "hello"})],
+            usage={"prompt_tokens": 12, "completion_tokens": 3},
+        )
+        yield {"event": "telemetry.usage", "data": usage_payload}
+        yield {"event": "done", "data": {}}
+    lease = object()
+    acquire_calls: list[int] = []
+    record_usage_calls: list[tuple[object, int, int]] = []
+    @asynccontextmanager
+    async def fake_acquire(*, estimated_prompt_tokens: int):
+        acquire_calls.append(estimated_prompt_tokens)
+        yield lease
+    def fake_record_usage(
+        lease_arg: object,
+        *,
+        usage_prompt_tokens: int,
+        usage_completion_tokens: int,
+    ) -> float:
+        record_usage_calls.append(
+            (lease_arg, usage_prompt_tokens, usage_completion_tokens)
+        )
+        return 0.0
+    fake_guard = SimpleNamespace(
+        acquire=fake_acquire,
+        record_usage=fake_record_usage,
+        _tpm_bucket=object(),
+    )
+    monkeypatch.setattr(
+        server_module,
+        "guards",
+        type("_Guards", (), {"get": lambda self, name: fake_guard})(),
+    )
+    class MockProvider:
+        model = "dummy"
+
+        async def chat_stream(self, *args: object, **kwargs: object):
+            async for item in stream_chat(*args, **kwargs):
+                yield item
+    monkeypatch.setitem(
+        server_module.providers.providers, "dummy", MockProvider()
+    )
+    messages = [
+        {"role": "system", "content": "You are concise."},
+        {"role": "user", "content": "Explain."},
+    ]
+    body = {
+        "model": "dummy",
+        "messages": messages,
+        "max_tokens": 128,
+        "stream": True,
+    }
+    expected_estimate = server_module._estimate_prompt_tokens(messages, body["max_tokens"])
+    response = TestClient(app).post("/v1/chat/completions", json=body)
+
+    assert response.status_code == 200
+    assert acquire_calls == [expected_estimate]
+    assert record_usage_calls == [
+        (lease, usage_payload["prompt_tokens"], usage_payload["completion_tokens"])
+    ]
+
+
 def test_chat_streams_provider_chunk_events(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

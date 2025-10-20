@@ -431,6 +431,7 @@ async def chat_completions(req: Request, body: ChatRequest):
             start=start,
             normalized_messages=normalized_messages,
             provider_kwargs=provider_kwargs,
+            estimated_prompt_tokens=estimated_prompt_tokens,
         )
     last_err: str | None = None
     usage_prompt = 0
@@ -606,6 +607,7 @@ async def _stream_chat_response(
     start: float,
     normalized_messages: list[dict[str, Any]],
     provider_kwargs: dict[str, Any],
+    estimated_prompt_tokens: int,
 ) -> JSONResponse | StreamingResponse:
     providers_to_try = [route.primary] + route.fallback
     if not providers_to_try:
@@ -617,6 +619,8 @@ async def _stream_chat_response(
             status_code=400,
             headers=headers,
         )
+
+    estimated_prompt_tokens = max(int(estimated_prompt_tokens), 0)
 
     def _encode_event(raw_event: Any) -> bytes:
         def _extract_event(source: Any) -> tuple[str | None, Any]:
@@ -774,8 +778,62 @@ async def _stream_chat_response(
             await _log_metrics(record)
 
         async def producer() -> None:
+            lease: Any | None = None
+            recorded_usage = False
+            usage_prompt_tokens = 0
+            usage_completion_tokens = 0
+            cancelled = False
+
+            def _record_usage(prompt: int, completion: int) -> None:
+                nonlocal recorded_usage
+                if recorded_usage or lease is None:
+                    return
+                recorded_usage = True
+                guard.record_usage(
+                    lease,
+                    usage_prompt_tokens=prompt,
+                    usage_completion_tokens=completion,
+                )
+
+            def _ingest_usage(raw_event: Any) -> None:
+                nonlocal usage_prompt_tokens, usage_completion_tokens
+
+                def _update_from_mapping(mapping: Any) -> None:
+                    nonlocal usage_prompt_tokens, usage_completion_tokens
+                    if not isinstance(mapping, dict):
+                        return
+                    prompt_value = mapping.get("prompt_tokens")
+                    completion_value = mapping.get("completion_tokens")
+                    if isinstance(prompt_value, int):
+                        usage_prompt_tokens = max(usage_prompt_tokens, prompt_value)
+                    if isinstance(completion_value, int):
+                        usage_completion_tokens = max(
+                            usage_completion_tokens, completion_value
+                        )
+
+                if hasattr(raw_event, "usage"):
+                    _update_from_mapping(getattr(raw_event, "usage"))
+                if isinstance(raw_event, dict):
+                    _update_from_mapping(raw_event.get("usage"))
+                    data = raw_event.get("data")
+                    if isinstance(data, dict):
+                        if "usage" in data:
+                            _update_from_mapping(data.get("usage"))
+                        else:
+                            _update_from_mapping(data)
+                else:
+                    data_attr = getattr(raw_event, "data", None)
+                    if isinstance(data_attr, dict):
+                        if "usage" in data_attr:
+                            _update_from_mapping(data_attr.get("usage"))
+                        else:
+                            _update_from_mapping(data_attr)
+
             try:
-                async with guard:
+                async with guard.acquire(
+                    estimated_prompt_tokens=estimated_prompt_tokens
+                ) as acquired_lease:
+                    lease = acquired_lease
                     stream_iter = provider.chat_stream(
                         model,
                         normalized_messages,
@@ -847,10 +905,13 @@ async def _stream_chat_response(
                         )
                         return
                     if first_event is not None:
+                        _ingest_usage(first_event)
                         await queue.put(("data", _encode_event(first_event)))
                     async for raw_event in stream_iter:
+                        _ingest_usage(raw_event)
                         await queue.put(("data", _encode_event(raw_event)))
                     planner.record_success(provider_name)
+                    _record_usage(usage_prompt_tokens, usage_completion_tokens)
                     await _write_metrics(
                         ok=True,
                         status=200,
@@ -859,6 +920,7 @@ async def _stream_chat_response(
                     )
                     await queue.put(("done", None))
             except asyncio.CancelledError:
+                cancelled = True
                 raise
             except UnsupportedContentBlockError as exc:
                 planner.record_failure(provider_name)
@@ -886,6 +948,13 @@ async def _stream_chat_response(
                         },
                     )
                 )
+            finally:
+                if lease is not None and not recorded_usage and not cancelled:
+                    guard.record_usage(
+                        lease,
+                        usage_prompt_tokens=0,
+                        usage_completion_tokens=0,
+                    )
 
         producer_task = asyncio.create_task(producer())
         first_kind, first_payload = await queue.get()
