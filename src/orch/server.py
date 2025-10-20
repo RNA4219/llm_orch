@@ -4,7 +4,7 @@ import os
 import time
 import uuid
 from collections import defaultdict
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator, MutableMapping
 from contextlib import asynccontextmanager
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
@@ -20,7 +20,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from .metrics import MetricsLogger
 from .providers import ProviderRegistry, UnsupportedContentBlockError
 from .rate_limiter import ProviderGuards
-from .router import RouteDef, RoutePlanner, load_config
+from .router import ProviderDef, RouteDef, RoutePlanner, load_config
 from .types import ChatRequest, ProviderChatResponse, chat_response_from_provider
 
 app = FastAPI(title="llm-orch")
@@ -86,6 +86,62 @@ PROM_HISTOGRAM: defaultdict[tuple[str, str], dict[str, Any]] = defaultdict(
 )
 
 
+class _AliasProviderMap(MutableMapping[str, Any]):
+    def __init__(self, data: dict[str, Any], aliases: dict[str, str]) -> None:
+        self._data = data
+        self._aliases = aliases
+
+    def _canonical(self, key: str) -> str:
+        return self._aliases.get(key, key)
+
+    def __getitem__(self, key: str) -> Any:
+        return self._data[self._canonical(key)]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        self._data[self._canonical(key)] = value
+
+    def __delitem__(self, key: str) -> None:
+        del self._data[self._canonical(key)]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._data)
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+    def __contains__(self, key: object) -> bool:  # pragma: no cover - defensive
+        if not isinstance(key, str):
+            return False
+        return self._canonical(key) in self._data
+
+
+def _build_alias_map(provider_defs: dict[str, ProviderDef]) -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    seen: dict[tuple[str, str, str], str] = {}
+    for name, defn in provider_defs.items():
+        signature = (
+            (defn.type or "").strip(),
+            defn.base_url or "",
+            defn.model or "",
+        )
+        canonical = seen.setdefault(signature, name)
+        if canonical != name:
+            aliases[name] = canonical
+    return aliases
+
+
+def _apply_provider_aliases(
+    provider_defs: dict[str, ProviderDef],
+    registry: ProviderRegistry,
+    guard_registry: ProviderGuards,
+) -> None:
+    aliases = _build_alias_map(provider_defs)
+    if not aliases:
+        return
+    registry.providers = _AliasProviderMap(registry.providers, aliases)
+    guard_registry.guards = _AliasProviderMap(guard_registry.guards, aliases)
+
+
 def _make_response_headers(*, req_id: str, provider: str | None, attempts: int) -> dict[str, str]:
     fallback_attempts = max(attempts - 1, 0)
     provider_value = provider or "unknown"
@@ -131,6 +187,7 @@ def _estimate_prompt_tokens(messages: list[dict[str, Any]], fallback: int) -> in
 cfg = load_config(CONFIG_DIR, use_dummy=USE_DUMMY)
 providers = ProviderRegistry(cfg.providers)
 guards = ProviderGuards(cfg.providers)
+_apply_provider_aliases(cfg.providers, providers, guards)
 planner = RoutePlanner(
     cfg.router,
     cfg.providers,
@@ -192,6 +249,7 @@ def reload_configuration() -> None:
     cfg = new_cfg
     providers = ProviderRegistry(new_cfg.providers)
     guards = ProviderGuards(new_cfg.providers)
+    _apply_provider_aliases(new_cfg.providers, providers, guards)
     planner = RoutePlanner(
         new_cfg.router,
         new_cfg.providers,
@@ -452,8 +510,14 @@ async def chat_completions(req: Request, body: ChatRequest):
     abort_error_type: str | None = None
     abort_retry_after: int | None = None
     for provider_name in [route.primary] + route.fallback:
-        prov = providers.get(provider_name)
-        guard = guards.get(provider_name)
+        try:
+            prov = providers.get(provider_name)
+        except KeyError:
+            continue
+        try:
+            guard = guards.get(provider_name)
+        except (AssertionError, KeyError):
+            continue
         for attempt in range(1, MAX_PROVIDER_ATTEMPTS + 1):
             should_abort = False
             async with guard.acquire(
@@ -755,8 +819,11 @@ async def _stream_chat_response(
     last_model = model
 
     for provider_name in providers_to_try:
+        try:
+            provider = providers.get(provider_name)
+        except KeyError:
+            continue
         attempts += 1
-        provider = providers.get(provider_name)
         provider_model = provider.model or model
         if not hasattr(provider, "chat_stream"):
             planner.record_failure(provider_name)
@@ -784,7 +851,7 @@ async def _stream_chat_response(
             continue
         try:
             guard = guards.get(provider_name)
-        except KeyError:
+        except (AssertionError, KeyError):
             guard = None
         queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
 
