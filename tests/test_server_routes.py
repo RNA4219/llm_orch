@@ -90,6 +90,168 @@ def assert_orch_headers(
     assert response.headers["x-orch-fallback-attempts"] == fallback_attempts
 
 
+def test_chat_respects_sticky_headers(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    providers_file = route_test_config / "providers.dummy.toml"
+    providers_file.write_text(
+        """
+[dummy_a]
+type = "dummy"
+model = "dummy"
+base_url = ""
+rpm = 60
+concurrency = 1
+tpm = 6000
+
+[dummy_b]
+type = "dummy"
+model = "dummy"
+base_url = ""
+rpm = 60
+concurrency = 1
+tpm = 6000
+
+[dummy_c]
+type = "dummy"
+model = "dummy"
+base_url = ""
+rpm = 60
+concurrency = 1
+tpm = 6000
+""".strip()
+    )
+    router_file = route_test_config / "router.yaml"
+    router_file.write_text(
+        """
+defaults:
+  temperature: 0.2
+  max_tokens: 64
+  task_header: "x-orch-task-kind"
+  task_header_value: "PLAN"
+routes:
+  PLAN:
+    strategy: sticky
+    sticky_ttl: 5
+    targets:
+      - provider: dummy_a
+      - provider: dummy_b
+      - provider: dummy_c
+""".strip()
+    )
+
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+
+    from src.orch.types import ProviderChatResponse
+
+    class FakePlanner:
+        def __init__(self, providers: list[str], *, ttl: float) -> None:
+            self.providers = providers
+            self.ttl = ttl
+            self.now = 0.0
+            self._assignments: dict[str, tuple[str, float]] = {}
+            self._rotation = 0
+            self.plan_calls: list[tuple[str, str | None, float]] = []
+
+        def _next_provider(self) -> str:
+            provider = self.providers[self._rotation % len(self.providers)]
+            self._rotation += 1
+            return provider
+
+        def plan(self, task: str, *, sticky_key: str | None = None) -> SimpleNamespace:
+            self.plan_calls.append((task, sticky_key, self.now))
+            if sticky_key:
+                assignment = self._assignments.get(sticky_key)
+                if assignment is not None and assignment[1] > self.now:
+                    provider = assignment[0]
+                else:
+                    provider = self._next_provider()
+                    self._assignments[sticky_key] = (provider, self.now + self.ttl)
+            else:
+                provider = self._next_provider()
+            fallback = [name for name in self.providers if name != provider]
+            return SimpleNamespace(primary=provider, fallback=fallback)
+
+        def record_success(self, provider: str) -> None:
+            pass
+
+        def record_failure(self, provider: str, *, now: float | None = None) -> None:
+            pass
+
+    fake_planner = FakePlanner(["dummy_a", "dummy_b", "dummy_c"], ttl=5.0)
+    monkeypatch.setattr(server_module, "planner", fake_planner, raising=False)
+
+    @asynccontextmanager
+    async def guard_ctx() -> Any:
+        yield object()
+
+    class FakeGuard:
+        def acquire(self, **_: object):
+            return guard_ctx()
+
+        def record_usage(
+            self,
+            lease: object,
+            *,
+            usage_prompt_tokens: int,
+            usage_completion_tokens: int,
+        ) -> float:
+            return 0.0
+
+    class FakeGuards:
+        def get(self, name: str) -> FakeGuard:
+            return FakeGuard()
+
+    monkeypatch.setattr(server_module, "guards", FakeGuards(), raising=False)
+
+    server_module.providers.providers.clear()
+
+    def make_provider(name: str) -> SimpleNamespace:
+        async def chat(*_: object, **__: object) -> ProviderChatResponse:
+            return ProviderChatResponse(status_code=200, model=name, content=name)
+
+        return SimpleNamespace(model=name, chat=chat)
+
+    for provider_name in ["dummy_a", "dummy_b", "dummy_c"]:
+        monkeypatch.setitem(
+            server_module.providers.providers,
+            provider_name,
+            make_provider(provider_name),
+        )
+
+    client = TestClient(app)
+    request_body = {
+        "model": "dummy",
+        "messages": [{"role": "user", "content": "hi"}],
+    }
+
+    def post_with(headers: dict[str, str], *, now: float) -> httpx.Response:
+        fake_planner.now = now
+        return client.post("/v1/chat/completions", headers=headers, json=request_body)
+
+    first = post_with({"x-orch-sticky-key": "user-1"}, now=0.0)
+    repeat = post_with({"x-orch-sticky-key": "user-1"}, now=1.0)
+    other_key = post_with({"x-orch-sticky-key": "user-2"}, now=1.5)
+    expired = post_with({"X-Orch-Session": "user-1"}, now=10.0)
+
+    for response in (first, repeat, other_key, expired):
+        assert response.status_code == 200
+
+    assert first.headers["x-orch-provider"] == "dummy_a"
+    assert repeat.headers["x-orch-provider"] == "dummy_a"
+    assert other_key.headers["x-orch-provider"] == "dummy_b"
+    assert expired.headers["x-orch-provider"] == "dummy_c"
+
+    assert [call[1] for call in fake_planner.plan_calls] == [
+        "user-1",
+        "user-1",
+        "user-2",
+        "user-1",
+    ]
+    assert fake_planner.plan_calls[-1][2] == 10.0
+
+
 def test_chat_uses_guard_estimates_and_records_usage(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

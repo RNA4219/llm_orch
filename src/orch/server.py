@@ -401,8 +401,13 @@ async def chat_completions(req: Request, body: ChatRequest):
 
     estimated_prompt_tokens = _estimate_prompt_tokens(normalized_messages, max_tokens)
 
+    sticky_key_header = req.headers.get("x-orch-sticky-key")
+    if not sticky_key_header:
+        sticky_key_header = req.headers.get("X-Orch-Session")
+    sticky_key = sticky_key_header.strip() if sticky_key_header else None
+
     try:
-        route = planner.plan(task)
+        route = planner.plan(task, sticky_key=sticky_key)
     except ValueError as exc:
         detail = str(exc) or "routing unavailable"
         await _log_metrics({

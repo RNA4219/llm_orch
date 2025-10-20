@@ -39,7 +39,7 @@ curl -s -H "Content-Type: application/json" \
 ## 設定
 
 - `config/providers.toml` : プロバイダ定義（`type` / `base_url` / `model` / `auth_env` / `rpm` / `tpm` / `concurrency`）
-- `config/router.yaml` : タスク種別ごとの weighted / priority / sticky ルートを宣言（ヘッダ `x-orch-task-kind`）。sticky ルートは `RoutePlanner.plan(..., sticky_key=...)` でキーを渡した呼び出しにより TTL 内固定が行われます。
+- `config/router.yaml` : タスク種別ごとの weighted / priority / sticky ルートを宣言（ヘッダ `x-orch-task-kind`）。sticky ルートは `RoutePlanner.plan(..., sticky_key=...)` または HTTP リクエストヘッダ `x-orch-sticky-key` / `X-Orch-Session` から渡されたキーにより TTL 内固定が行われます。
 
 > ローカル動作のみなら `providers.dummy.toml` を `providers.toml` に置き換えてください。
 
@@ -75,7 +75,11 @@ curl -s -H "Content-Type: application/json" \
 
 - `_config_refresh_loop` が `ORCH_CONFIG_DIR` 配下の `providers.toml` / `router.yaml` を監視し、更新検知時に `reload_configuration()` を経由して `RoutePlanner` / `ProviderRegistry` / `ProviderGuards` を再構築します。
 
+## Sticky ルーティング
+
+- `x-orch-sticky-key: <任意キー>` を付与した `/v1/chat/completions` リクエストは、該当キーに対し TTL 期間中同じプロバイダへ固定されます。
+- 既存クライアントは `X-Orch-Session` ヘッダでも同等の動作を利用できます。
+
 ## 既知の制限
 
-- HTTP エンドポイントは `sticky_key` をまだ受け付けておらず、sticky ルートは内部コンポーネントからの呼び出し時のみ適用されます。
 - TPMガードは `usage` が欠落するプロバイダでは推定トークンを用いるため、保守的なスロットリングが発生します。
