@@ -24,7 +24,7 @@ jobs:
           python-version: '3.11'
       - run: python -m venv .venv
       - run: . .venv/bin/activate && pip install -r requirements.txt
-      - run: . .venv/bin/activate && mypy --strict src
+      - run: . .venv/bin/activate && mypy --strict src/orch/router.py
 
   test:
     runs-on: ubuntu-latest

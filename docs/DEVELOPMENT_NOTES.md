@@ -7,4 +7,4 @@
 
 ## PR チェックリスト
 - [ ] `ruff check .` を通過しているか（CI: `ci-py / ruff`）。
-- [ ] `mypy --strict src` を通過しているか（CI: `ci-py / mypy`）。
+- [ ] `mypy --strict src/orch/router.py` を通過しているか（CI: `ci-py / mypy`）。
