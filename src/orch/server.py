@@ -431,6 +431,7 @@ async def chat_completions(req: Request, body: ChatRequest):
             start=start,
             normalized_messages=normalized_messages,
             provider_kwargs=provider_kwargs,
+            estimated_prompt_tokens=estimated_prompt_tokens,
         )
     last_err: str | None = None
     usage_prompt = 0
@@ -606,6 +607,7 @@ async def _stream_chat_response(
     start: float,
     normalized_messages: list[dict[str, Any]],
     provider_kwargs: dict[str, Any],
+    estimated_prompt_tokens: int,
 ) -> JSONResponse | StreamingResponse:
     providers_to_try = [route.primary] + route.fallback
     if not providers_to_try:
@@ -775,7 +777,9 @@ async def _stream_chat_response(
 
         async def producer() -> None:
             try:
-                async with guard:
+                async with guard.acquire(
+                    estimated_prompt_tokens=estimated_prompt_tokens
+                ) as _lease:
                     stream_iter = provider.chat_stream(
                         model,
                         normalized_messages,
