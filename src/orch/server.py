@@ -938,7 +938,8 @@ async def _stream_chat_response(
             if isinstance(completion_value, int) and completion_value > usage_completion_tokens:
                 usage_completion_tokens = completion_value
             if (
-                guard_lease is not None
+                guard is not None
+                and guard_lease is not None
                 and not usage_recorded
                 and (isinstance(prompt_value, int) or isinstance(completion_value, int))
             ):
