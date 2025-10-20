@@ -36,6 +36,31 @@ curl -s -H "Content-Type: application/json" \
   http://localhost:31001/v1/chat/completions | jq .
 ```
 
+## Docker
+
+```bash
+# ビルド（config/ 以下のサンプルを同梱）
+docker build -t llm-orch:dev .
+
+# 起動（ports:8000、config/ を read-only マウント）
+docker compose up --build
+
+# バックグラウンド
+docker compose up -d
+```
+
+`docker compose` の環境変数は `.env` または `docker compose --env-file` で差し替え可能です。例:
+
+```bash
+# ダミー → 本番プロバイダ設定に切り替え
+cp config/providers.dummy.toml config/providers.toml  # 必要に応じて編集
+ORCH_USE_DUMMY=0 ORCH_CONFIG_DIR=/app/config docker compose up --build
+
+# APIキーを追加
+echo "ORCH_INBOUND_API_KEYS=sk-local-1" >> .env
+docker compose up
+```
+
 ## 設定
 
 - `config/providers.toml` : プロバイダ定義（`type` / `base_url` / `model` / `auth_env` / `rpm` / `tpm` / `concurrency`）

@@ -1,4 +1,14 @@
 import pathlib
+import subprocess
+import sys
+
+import pytest
+
+PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from tools.ci.docker_build_smoke import run_docker_build_smoke
 
 
 def test_chat_curl_uses_failfast_flag() -> None:
@@ -62,3 +72,26 @@ def test_curl_commands_support_api_key_header() -> None:
         assert '"${AUTH_HEADER_ARGS[@]}"' in joined, (
             f'curl command #{idx} must include the conditional API header arguments'
         )
+
+
+def test_run_docker_build_smoke_invokes_docker_build(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_run(command: tuple[str, ...], *, check: bool) -> subprocess.CompletedProcess[object]:
+        captured["command"] = command
+        captured["check"] = check
+        return subprocess.CompletedProcess(args=command, returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    context = pathlib.Path("/tmp/workspace")
+    run_docker_build_smoke(context=context, tag="llm-orch:test")
+
+    command = captured["command"]
+    assert isinstance(command, tuple)
+    assert command[:2] == ("docker", "build")
+    assert "--file" in command
+    file_index = command.index("--file")
+    assert command[file_index + 1] == str(context / "Dockerfile")
+    assert command[-1] == str(context)
+    assert captured["check"] is True
