@@ -260,17 +260,31 @@ def validate_router_config(router: RouterConfig, providers: Dict[str, ProviderDe
     for route_name, route in router.routes.items():
         if not route.targets:
             raise ValueError(f"Route '{route_name}' must specify at least one provider")
+        primary_name = route.targets[0].provider
+        has_known_provider = False
         for target in route.targets:
             provider_name = target.provider
             if provider_name not in providers:
-                available = ", ".join(sorted(providers)) or "<none>"
-                raise ValueError(
-                    "Route '{route}' references undefined provider '{provider}'. Available providers: {available}".format(
-                        route=route_name,
-                        provider=provider_name,
-                        available=available,
-                    )
+                continue
+            has_known_provider = True
+        if primary_name not in providers:
+            available = ", ".join(sorted(providers)) or "<none>"
+            raise ValueError(
+                "Route '{route}' references undefined provider '{provider}'. Available providers: {available}".format(
+                    route=route_name,
+                    provider=primary_name,
+                    available=available,
                 )
+            )
+        if not has_known_provider:
+            available = ", ".join(sorted(providers)) or "<none>"
+            raise ValueError(
+                "Route '{route}' references undefined provider '{provider}'. Available providers: {available}".format(
+                    route=route_name,
+                    provider=primary_name,
+                    available=available,
+                )
+            )
 
 class RoutePlanner:
     def __init__(
