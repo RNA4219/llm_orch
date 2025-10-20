@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import json
 import os
 import time
@@ -124,6 +125,23 @@ def _estimate_prompt_tokens(messages: list[dict[str, Any]], fallback: int) -> in
     if total <= 0:
         return max(int(fallback), 0)
     return total
+
+
+def _planner_supports_sticky(plan: Any) -> bool:
+    try:
+        signature = inspect.signature(plan)
+    except (TypeError, ValueError):
+        return False
+    parameters = signature.parameters
+    if any(param.kind is inspect.Parameter.VAR_KEYWORD for param in parameters.values()):
+        return True
+    sticky_param = parameters.get("sticky_key")
+    if sticky_param is None:
+        return False
+    return sticky_param.kind in (
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        inspect.Parameter.KEYWORD_ONLY,
+    )
 
 
 cfg = load_config(CONFIG_DIR, use_dummy=USE_DUMMY)
@@ -407,7 +425,11 @@ async def chat_completions(req: Request, body: ChatRequest):
     sticky_key = sticky_key_header.strip() if sticky_key_header else None
 
     try:
-        route = planner.plan(task, sticky_key=sticky_key)
+        plan_fn = planner.plan
+        if _planner_supports_sticky(plan_fn):
+            route = plan_fn(task, sticky_key=sticky_key)
+        else:
+            route = plan_fn(task)
     except ValueError as exc:
         detail = str(exc) or "routing unavailable"
         await _log_metrics({
