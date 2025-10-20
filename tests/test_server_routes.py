@@ -36,6 +36,12 @@ def load_app(dummy_env: str | None = None) -> FastAPI:
     return module.app
 
 
+def ensure_project_root_on_path() -> None:
+    project_root = Path(__file__).resolve().parents[1]
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+
+
 @pytest.fixture(name="route_test_config")
 def fixture_route_test_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("ORCH_CONFIG_DIR", str(tmp_path))
@@ -43,6 +49,14 @@ def fixture_route_test_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     providers_file.write_text(
         """
 [dummy]
+type = "dummy"
+model = "dummy"
+base_url = ""
+rpm = 60
+concurrency = 1
+tpm = 6000
+
+[dummy_alt]
 type = "dummy"
 model = "dummy"
 base_url = ""
@@ -61,10 +75,76 @@ defaults:
   task_header_value: "PLAN"
 routes:
   PLAN:
-    primary: dummy
+    targets:
+      - provider: dummy
+        circuit_breaker:
+          failure_threshold: 2
+          recovery_time_s: 60
+      - provider: dummy_alt
 """.strip()
     )
     return tmp_path
+
+
+def test_route_planner_skips_provider_after_consecutive_failures(
+    route_test_config: Path,
+) -> None:
+    ensure_project_root_on_path()
+    from src.orch.router import RoutePlanner, load_config
+
+    loaded = load_config(str(route_test_config), use_dummy=True)
+    planner = RoutePlanner(loaded.router, loaded.providers)
+
+    initial = planner.plan("PLAN", now=0.0)
+    assert initial.primary == "dummy"
+
+    planner.record_failure("dummy", now=1.0)
+    planner.record_failure("dummy", now=2.0)
+
+    rerouted = planner.plan("PLAN", now=3.0)
+    assert rerouted.primary == "dummy_alt"
+    assert rerouted.fallback and rerouted.fallback[0] == "dummy"
+
+
+def test_route_planner_circuit_resets_after_recovery(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from importlib import import_module
+
+    ensure_project_root_on_path()
+    from src.orch.router import RoutePlanner, load_config
+
+    loaded = load_config(str(route_test_config), use_dummy=True)
+    planner = RoutePlanner(loaded.router, loaded.providers)
+
+    router_module = import_module("src.orch.router")
+
+    current_time = [100.0]
+
+    def fake_monotonic() -> float:
+        return current_time[0]
+
+    monkeypatch.setattr(router_module.time, "monotonic", fake_monotonic)
+
+    initial = planner.plan("PLAN")
+    assert initial.primary == "dummy"
+
+    planner.record_failure("dummy")
+    current_time[0] += 1.0
+    planner.record_failure("dummy")
+    failure_time = current_time[0]
+
+    current_time[0] = failure_time + 1.0
+    blocked = planner.plan("PLAN")
+    assert blocked.primary == "dummy_alt"
+
+    current_time[0] = failure_time + 61.0
+    recovered = planner.plan("PLAN")
+    assert recovered.primary == "dummy"
+
+    state = planner._circuit_states["dummy"]
+    assert state.opened_until is None
+    assert state.failure_count == 0
 
 
 def capture_metric_records(
