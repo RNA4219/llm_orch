@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
 import os
 import sys
 from collections.abc import Callable
@@ -2231,6 +2232,63 @@ concurrency = 1
     fallback_record = records[-1]
     assert fallback_record["ok"] is False
     assert fallback_record["model"] == "prov-model"
+
+
+def test_chat_logs_error_context(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    providers_file = route_test_config / "providers.dummy.toml"
+    providers_file.write_text(
+        """
+[dummy]
+type = "dummy"
+model = ""
+base_url = ""
+rpm = 60
+concurrency = 1
+""".strip()
+    )
+    _write_single_provider_router(route_test_config)
+
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+
+    class FailingProvider:
+        model = ""
+
+        def __init__(self) -> None:
+            self.chat = AsyncMock(side_effect=RuntimeError("boom"))
+
+    monkeypatch.setattr(server_module, "MAX_PROVIDER_ATTEMPTS", 1)
+    monkeypatch.setitem(
+        server_module.providers.providers,
+        "dummy",
+        FailingProvider(),
+    )
+
+    client = TestClient(app)
+    caplog.clear()
+    with caplog.at_level(logging.ERROR):
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "",
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+        )
+
+    assert response.status_code == 502
+    req_id = response.headers["x-orch-request-id"]
+    provider = response.headers["x-orch-provider"]
+    attempts = int(response.headers["x-orch-fallback-attempts"]) + 1
+
+    error_records = [record for record in caplog.records if record.levelno >= logging.ERROR]
+    assert error_records
+    last_record = error_records[-1]
+    message = last_record.getMessage()
+    assert f"req_id={req_id}" in message
+    assert f"provider={provider}" in message
+    assert f"attempts={attempts}" in message
 
 
 def test_chat_missing_header_routes_to_task_header_default(
