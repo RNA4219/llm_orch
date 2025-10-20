@@ -496,8 +496,26 @@ async def chat_completions(req: Request, body: ChatRequest):
     abort_error_type: str | None = None
     abort_retry_after: int | None = None
     for provider_name in [route.primary] + route.fallback:
-        prov = providers.get(provider_name)
-        guard = guards.get(provider_name)
+        try:
+            prov = providers.get(provider_name)
+        except KeyError:
+            planner.record_failure(provider_name)
+            last_provider = provider_name
+            last_model = body.model
+            last_err = f"provider '{provider_name}' unavailable"
+            last_error_type = "routing_error"
+            continue
+        try:
+            guard = guards.get(provider_name)
+        except KeyError:
+            guard = None
+        except Exception:
+            planner.record_failure(provider_name)
+            last_provider = provider_name
+            last_model = prov.model or body.model
+            last_err = f"guard unavailable for provider '{provider_name}'"
+            last_error_type = "routing_error"
+            continue
         for attempt in range(1, MAX_PROVIDER_ATTEMPTS + 1):
             should_abort = False
             async with guard.acquire(
@@ -790,7 +808,17 @@ async def _stream_chat_response(
 
     for provider_name in providers_to_try:
         attempts += 1
-        provider = providers.get(provider_name)
+        try:
+            provider = providers.get(provider_name)
+        except KeyError:
+            planner.record_failure(provider_name)
+            last_provider = provider_name
+            last_model = model
+            last_error = f"provider '{provider_name}' unavailable"
+            last_error_type = "routing_error"
+            last_status = BAD_GATEWAY_STATUS
+            last_retry_after = None
+            continue
         provider_model = provider.model or model
         if not hasattr(provider, "chat_stream"):
             planner.record_failure(provider_name)
@@ -820,6 +848,15 @@ async def _stream_chat_response(
             guard = guards.get(provider_name)
         except KeyError:
             guard = None
+        except Exception:
+            planner.record_failure(provider_name)
+            last_provider = provider_name
+            last_model = provider_model
+            last_error = f"guard unavailable for provider '{provider_name}'"
+            last_error_type = "routing_error"
+            last_status = BAD_GATEWAY_STATUS
+            last_retry_after = None
+            continue
         queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
         usage_prompt_tokens = usage_completion_tokens = 0
         usage_recorded = False
@@ -840,7 +877,8 @@ async def _stream_chat_response(
             if isinstance(completion_value, int) and completion_value > usage_completion_tokens:
                 usage_completion_tokens = completion_value
             if (
-                guard_lease is not None
+                guard is not None
+                and guard_lease is not None
                 and not usage_recorded
                 and (isinstance(prompt_value, int) or isinstance(completion_value, int))
             ):
@@ -880,15 +918,24 @@ async def _stream_chat_response(
             await _log_metrics(record)
 
         async def producer() -> None:
-            nonlocal guard_lease
+            nonlocal usage_prompt_tokens, usage_completion_tokens, usage_recorded, guard_lease
             try:
-                async with guard as lease:
+                async with _guard_context(
+                    guard, estimated_prompt_tokens=estimated_prompt_tokens
+                ) as lease:
                     guard_lease = lease
-                    stream_iter = provider.chat_stream(
-                        model,
-                        normalized_messages,
-                        **provider_kwargs,
-                    )
+                    try:
+                        stream_iter = provider.chat_stream(
+                            model,
+                            normalized_messages,
+                            **provider_kwargs,
+                        )
+                    except TypeError:
+                        stream_iter = provider.chat_stream(
+                            model,
+                            normalized_messages,
+                            provider_kwargs,
+                        )
                     try:
                         first_event = await anext(stream_iter, None)
                     except UnsupportedContentBlockError as exc:
