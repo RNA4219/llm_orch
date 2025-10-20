@@ -36,6 +36,32 @@ curl -s -H "Content-Type: application/json" \
   http://localhost:31001/v1/chat/completions | jq .
 ```
 
+## Helm でのデプロイ
+
+Kubernetes へデプロイする場合は、リポジトリ内の Helm チャート `charts/llm-orch/` を使用できます。
+
+1. デフォルト値をコピーして環境に合わせて調整します。
+
+   ```bash
+   cp charts/llm-orch/values.yaml my-values.yaml
+   ```
+
+2. `my-values.yaml` の `config.providers` / `config.router` に `config/providers.toml` と `config/router.yaml` 相当の内容を埋め込みます。
+   - `config.providers` は TOML のリテラルをそのまま貼り付けます。
+   - `config.router` は YAML のリテラルをそのまま貼り付けます。
+
+3. 下記いずれかの方法でマニフェストを生成または適用します。
+
+   ```bash
+   # マニフェストを確認
+   helm template llm-orch charts/llm-orch -f my-values.yaml
+
+   # クラスタへ適用
+   helm upgrade --install llm-orch charts/llm-orch -f my-values.yaml
+   ```
+
+`helm template` / `helm upgrade` 実行時に ConfigMap が生成され、`ORCH_CONFIG_DIR=/config` として Pod にマウントされます。プロバイダの認証情報は引き続き環境変数（例: `OPENAI_API_KEY`）で注入してください。
+
 ## 設定
 
 - `config/providers.toml` : プロバイダ定義（`type` / `base_url` / `model` / `auth_env` / `rpm` / `tpm` / `concurrency`）

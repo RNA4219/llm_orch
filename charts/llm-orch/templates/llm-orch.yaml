@@ -1,0 +1,92 @@
+{{- $name := default .Chart.Name .Values.nameOverride -}}
+{{- $fullname := default (printf "%s-%s" .Release.Name $name) .Values.fullnameOverride -}}
+{{- $labels := dict "app.kubernetes.io/name" $name "app.kubernetes.io/instance" .Release.Name "app.kubernetes.io/version" .Chart.AppVersion "app.kubernetes.io/component" "server" "app.kubernetes.io/managed-by" "Helm" -}}
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ printf "%s-config" $fullname | trunc 63 | trimSuffix "-" }}
+  labels:
+{{- range $key, $value := $labels }}
+    {{ $key }}: {{ $value | quote }}
+{{- end }}
+data:
+  providers.toml: |
+{{- default "" .Values.config.providers | nindent 4 }}
+  router.yaml: |
+{{- default "" .Values.config.router | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname | trunc 63 | trimSuffix "-" }}
+  labels:
+{{- range $key, $value := $labels }}
+    {{ $key }}: {{ $value | quote }}
+{{- end }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $name | quote }}
+      app.kubernetes.io/instance: {{ .Release.Name | quote }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ $name | quote }}
+        app.kubernetes.io/instance: {{ .Release.Name | quote }}
+        app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+        app.kubernetes.io/component: "server"
+    spec:
+      containers:
+        - name: {{ $name | quote }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: ORCH_CONFIG_DIR
+              value: /config
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+{{- with .Values.resources }}
+          resources:
+{{ toYaml . | indent 12 }}
+{{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ printf "%s-config" $fullname | trunc 63 | trimSuffix "-" }}
+{{- with .Values.nodeSelector }}
+      nodeSelector:
+{{ toYaml . | indent 8 }}
+{{- end }}
+{{- with .Values.affinity }}
+      affinity:
+{{ toYaml . | indent 8 }}
+{{- end }}
+{{- with .Values.tolerations }}
+      tolerations:
+{{ toYaml . | indent 8 }}
+{{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname | trunc 63 | trimSuffix "-" }}
+  labels:
+{{- range $key, $value := $labels }}
+    {{ $key }}: {{ $value | quote }}
+{{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    app.kubernetes.io/name: {{ $name | quote }}
+    app.kubernetes.io/instance: {{ .Release.Name | quote }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
