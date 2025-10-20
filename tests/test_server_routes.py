@@ -952,6 +952,57 @@ def _make_http_status_error(status: int, retry_after: str | None = None) -> http
 
 
 @pytest.mark.parametrize(
+    ("scenario", "expected_status", "expected_code"),
+    [
+        ("auth", 401, "invalid_api_key"),
+        ("rate_limit", 429, "rate_limit"),
+        ("server_error", 502, "provider_server_error"),
+    ],
+)
+def test_chat_error_code_is_enumerated(
+    route_test_config: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    scenario: str,
+    expected_status: int,
+    expected_code: str,
+) -> None:
+    _write_single_provider_router(route_test_config)
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+    client = TestClient(app)
+
+    if scenario == "auth":
+        monkeypatch.setattr(server_module, "INBOUND_API_KEYS", frozenset({"secret"}))
+    else:
+        status_map = {"rate_limit": 429, "server_error": 503}
+
+        class ErroringProvider:
+            model = "dummy"
+
+            async def chat(self, *args: object, **kwargs: object) -> object:
+                raise _make_http_status_error(status_map[scenario])
+
+        monkeypatch.setitem(
+            server_module.providers.providers, "dummy", ErroringProvider()
+        )
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "dummy", "messages": [{"role": "user", "content": "hi"}]},
+    )
+
+    assert response.status_code == expected_status
+    payload = response.json()
+    error_body = payload.get("error")
+    assert isinstance(error_body, dict)
+    error_code = error_body.get("code")
+    assert isinstance(error_code, str)
+    enum_values = {member.value for member in server_module.ErrorCode}
+    assert error_code in enum_values
+    assert error_code == expected_code
+
+
+@pytest.mark.parametrize(
     "retry_after_seconds, use_http_date",
     [(37, False), (90, True)],
 )

@@ -1,0 +1,32 @@
+image:
+  repository: ghcr.io/zen-xu/llm-orch
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+service:
+  type: ClusterIP
+  port: 8000
+
+resources: {}
+
+affinity: {}
+
+tolerations: []
+
+nodeSelector: {}
+
+config:
+  providers: |
+    # See config/providers.toml for a full example
+    [providers.example]
+    transport = "openai-chat-completions"
+    model = "gpt-4o"
+
+  router: |
+    # See config/router.yaml for detailed routing examples
+    routes:
+      - name: default
+        primary: providers.example
+        fallback: []

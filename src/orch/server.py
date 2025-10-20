@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+from enum import Enum
 from typing import Any
 
 import httpx
@@ -85,6 +86,21 @@ PROM_COUNTER: defaultdict[tuple[str, str, str], int] = defaultdict(int)
 PROM_HISTOGRAM: defaultdict[tuple[str, str], dict[str, Any]] = defaultdict(
     _new_histogram_state
 )
+
+
+class ErrorCode(str, Enum):
+    INVALID_API_KEY = "invalid_api_key"
+    RATE_LIMIT = "rate_limit"
+    PROVIDER_ERROR = "provider_error"
+    PROVIDER_SERVER_ERROR = "provider_server_error"
+    ROUTING_ERROR = "routing_error"
+
+    @classmethod
+    def from_error_type(cls, error_type: str) -> "ErrorCode | None":
+        try:
+            return cls(error_type)
+        except ValueError:
+            return None
 
 
 class _AliasProviderMap(MutableMapping[str, Any]):
@@ -345,22 +361,36 @@ def _error_type_from_status(status: int | None) -> str:
     return "provider_error"
 
 
+def _resolve_error_code(
+    *, status_code: int, error_type: str, explicit: "ErrorCode | str | None"
+) -> str:
+    if explicit is not None:
+        if isinstance(explicit, ErrorCode):
+            return explicit.value
+        return str(explicit)
+    if status_code == 401:
+        return ErrorCode.INVALID_API_KEY.value
+    if status_code == 429:
+        return ErrorCode.RATE_LIMIT.value
+    if status_code >= 500:
+        return ErrorCode.PROVIDER_SERVER_ERROR.value
+    member = ErrorCode.from_error_type(error_type)
+    if member is not None:
+        return member.value
+    return error_type
+
+
 def _make_error_body(
     *,
     status_code: int,
     message: str,
     error_type: str,
     retry_after: int | None = None,
-    code: str | None = None,
+    code: "ErrorCode | str | None" = None,
 ) -> dict[str, Any]:
-    resolved_code = code
-    if resolved_code is None:
-        if status_code == 401:
-            resolved_code = "invalid_api_key"
-        elif status_code == 429:
-            resolved_code = "rate_limit"
-        else:
-            resolved_code = error_type
+    resolved_code = _resolve_error_code(
+        status_code=status_code, error_type=error_type, explicit=code
+    )
     payload: dict[str, Any] = {
         "message": message,
         "type": error_type,
@@ -461,7 +491,7 @@ async def chat_completions(req: Request, body: ChatRequest):
             status_code=exc.status_code,
             message=detail,
             error_type="authentication_error",
-            code="invalid_api_key",
+            code=ErrorCode.INVALID_API_KEY,
         )
         return JSONResponse(error_body, status_code=exc.status_code, headers=headers)
     header_value = (
