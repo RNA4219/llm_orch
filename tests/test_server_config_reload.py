@@ -3,11 +3,11 @@ from __future__ import annotations
 import asyncio
 import importlib
 import os
-from types import SimpleNamespace
 import sys
 import time
 from pathlib import Path
 from threading import Event
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -290,9 +290,33 @@ def test_config_refresh_loop_reloads_when_planner_requests(
 def test_http_request_uses_reloaded_provider_and_limits(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def write_bundle(provider: str, max_tokens: int, concurrency: int, timestamp: float) -> None:
-        providers_body = "\n".join([f"[{provider}]", 'type = "dummy"', 'model = "dummy"', f'base_url = "http://{provider}"', "rpm = 60", f"concurrency = {concurrency}", ""])
-        router_body = "\n".join(["defaults:", "  temperature: 0.2", f"  max_tokens: {max_tokens}", '  task_header: "x-orch-task-kind"', '  task_header_value: "PLAN"', "routes:", "  PLAN:", f"    primary: {provider}", ""])
+    def write_bundle(
+        provider: str, max_tokens: int, concurrency: int, timestamp: float
+    ) -> None:
+        providers_body = "\n".join(
+            [
+                f"[{provider}]",
+                'type = "dummy"',
+                'model = "dummy"',
+                f'base_url = "http://{provider}"',
+                "rpm = 60",
+                f"concurrency = {concurrency}",
+                "",
+            ]
+        )
+        router_body = "\n".join(
+            [
+                "defaults:",
+                "  temperature: 0.2",
+                f"  max_tokens: {max_tokens}",
+                '  task_header: "x-orch-task-kind"',
+                '  task_header_value: "PLAN"',
+                "routes:",
+                "  PLAN:",
+                f"    primary: {provider}",
+                "",
+            ]
+        )
         for name, body in (
             ("providers.dummy.toml", providers_body),
             ("router.yaml", router_body),
@@ -304,7 +328,11 @@ def test_http_request_uses_reloaded_provider_and_limits(
             os.utime(path, (timestamp, timestamp))
 
     write_bundle("alpha", 64, 1, 1_000_000.0)
-    for key, value in (("ORCH_CONFIG_DIR", str(tmp_path)), ("ORCH_USE_DUMMY", "1"), ("ORCH_INBOUND_API_KEYS", "test-key")):
+    for key, value in (
+        ("ORCH_CONFIG_DIR", str(tmp_path)),
+        ("ORCH_USE_DUMMY", "1"),
+        ("ORCH_INBOUND_API_KEYS", "test-key"),
+    ):
         monkeypatch.setenv(key, value)
 
     load_app("1")
@@ -313,10 +341,22 @@ def test_http_request_uses_reloaded_provider_and_limits(
 
     from src.orch.providers import DummyProvider
     from src.orch.types import ProviderChatResponse
+
     call_state = SimpleNamespace(value=None)
-    async def fake_chat(self: DummyProvider, model: str, messages: list[dict[str, object]], **kwargs: object) -> ProviderChatResponse:  # type: ignore[override]
+
+    async def fake_chat(
+        self: DummyProvider,
+        model: str,
+        messages: list[dict[str, object]],
+        **kwargs: object,
+    ) -> ProviderChatResponse:  # type: ignore[override]
         call_state.value = (self.defn.name, int(kwargs.get("max_tokens", 0)))
-        return ProviderChatResponse(status_code=200, model="dummy", content=self.defn.name, finish_reason="stop")
+        return ProviderChatResponse(
+            status_code=200,
+            model="dummy",
+            content=self.defn.name,
+            finish_reason="stop",
+        )
 
     monkeypatch.setattr(DummyProvider, "chat", fake_chat, raising=False)
 
@@ -324,7 +364,10 @@ def test_http_request_uses_reloaded_provider_and_limits(
         resp = client.post(
             "/v1/chat/completions",
             headers={"x-api-key": "test-key"},
-            json={"model": "dummy-model", "messages": [{"role": "user", "content": "hello"}]},
+            json={
+                "model": "dummy-model",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
         )
         assert resp.status_code == 200
 
@@ -334,10 +377,16 @@ def test_http_request_uses_reloaded_provider_and_limits(
         resp = client.post(
             "/v1/chat/completions",
             headers={"x-api-key": "test-key"},
-            json={"model": "dummy-model", "messages": [{"role": "user", "content": "after"}]},
+            json={
+                "model": "dummy-model",
+                "messages": [{"role": "user", "content": "after"}],
+            },
         )
         assert resp.status_code == 200
-        assert (resp.headers["x-orch-provider"], call_state.value) == ("beta", ("beta", 128))
+        assert (resp.headers["x-orch-provider"], call_state.value) == (
+            "beta",
+            ("beta", 128),
+        )
 
 
 def test_config_refresh_loop_discards_old_planner_immediately(
