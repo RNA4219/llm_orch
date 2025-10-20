@@ -58,8 +58,17 @@ def _partial_http_error_stream(*_args: Any, **_kwargs: Any) -> Any:
 
 
 class _DummyGuard:
-    async def __aenter__(self) -> None:
-        return None
+    def __init__(self) -> None:
+        self.estimated_prompt_tokens: int | None = None
+
+    def acquire(
+        self, *, estimated_prompt_tokens: int | None = None
+    ) -> "_DummyGuard":
+        self.estimated_prompt_tokens = estimated_prompt_tokens
+        return self
+
+    async def __aenter__(self) -> "_DummyGuard":
+        return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
         return None
