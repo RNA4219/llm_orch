@@ -36,6 +36,38 @@ curl -s -H "Content-Type: application/json" \
   http://localhost:31001/v1/chat/completions | jq .
 ```
 
+<!-- schema: ChatRequest -->
+```json
+{
+  "model": "gpt-4o-mini",
+  "messages": [
+    {"role": "system", "content": "You are a concise assistant."},
+    {"role": "user", "content": "最新のオーダー状況を教えて。"}
+  ],
+  "temperature": 0.2,
+  "max_tokens": 512,
+  "stream": true,
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "lookup_order_status",
+        "description": "注文IDから現在の出荷状況を取得する",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "order_id": {"type": "string"}
+          },
+          "required": ["order_id"]
+        }
+      }
+    }
+  ],
+  "tool_choice": "auto",
+  "top_p": 0.9
+}
+```
+
 ## Docker
 
 ```bash
