@@ -1,6 +1,7 @@
 import asyncio
 import inspect
 import json
+import logging
 import os
 import time
 import uuid
@@ -75,6 +76,8 @@ API_KEY_HEADER = os.environ.get("ORCH_API_KEY_HEADER", "x-api-key")
 ALLOWED_ORIGINS = _parse_env_list(os.environ.get("ORCH_CORS_ALLOW_ORIGINS", ""))
 PROM_CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
 HISTOGRAM_BUCKETS: tuple[float, ...] = (0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0)
+
+logger = logging.getLogger(__name__)
 
 
 def _new_histogram_state() -> dict[str, Any]:
@@ -373,6 +376,9 @@ def _make_error_body(
 
 def _require_api_key(req: Request) -> None:
     if not INBOUND_API_KEYS:
+        logger.warning(
+            "APIキー保護が無効: ORCH_INBOUND_API_KEYS が未設定"
+        )
         return
     candidate = req.headers.get(API_KEY_HEADER)
     if candidate is None:

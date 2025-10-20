@@ -53,6 +53,12 @@ curl -s -H "Content-Type: application/json" \
 - `ORCH_METRICS_EXPORT_MODE` : メトリクス出力モード。`prom`（Prometheusのみ）/`otel`（OTelのみ）/`both`（両方）。既定は `prom`。後方互換として `ORCH_OTEL_METRICS_EXPORT` を真値にすると `both` 相当になります。
 - `ORCH_OTEL_METRICS_EXPORT` : OpenTelemetryメトリクスを旧来通り有効化する互換フラグ。`ORCH_METRICS_EXPORT_MODE` 未設定時のみ参照されます。
 
+## セキュリティ
+
+- 本番環境では `ORCH_INBOUND_API_KEYS` によるAPIキー保護を必須運用とし、キー未設定時はアプリケーションログに警告が出力されることを監視してください。
+- 既定の `ORCH_CORS_ALLOW_ORIGINS` は空文字列（=許可Originなし）であり、必要なOriginのみを明示的に列挙してください。
+- APIキー値など機密情報はレスポンスやHTTPヘッダに含めず、ログにも平文で記録されません。APIキー保護を無効化した場合のみ警告ログが出力されます。
+
 ## メトリクス
 
 - 既定は `metrics/requests-YYYYMMDD.jsonl` に 1リクエスト=1行追記。
