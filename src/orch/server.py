@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import json
 import os
 import time
@@ -781,6 +782,8 @@ async def _stream_chat_response(
                         normalized_messages,
                         **provider_kwargs,
                     )
+                    if inspect.isawaitable(stream_iter) and not hasattr(stream_iter, "__anext__"):
+                        stream_iter = await stream_iter
                     try:
                         first_event = await anext(stream_iter, None)
                     except UnsupportedContentBlockError as exc:
