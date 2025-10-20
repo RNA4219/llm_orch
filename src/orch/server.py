@@ -1,6 +1,7 @@
 import asyncio
 import inspect
 import json
+import logging
 import os
 import time
 import uuid
@@ -23,6 +24,8 @@ from .providers import ProviderRegistry, UnsupportedContentBlockError
 from .rate_limiter import ProviderGuards
 from .router import ProviderDef, RouteDef, RoutePlanner, load_config
 from .types import ChatRequest, ProviderChatResponse, chat_response_from_provider
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="llm-orch")
 
@@ -155,6 +158,22 @@ def _make_response_headers(*, req_id: str, provider: str | None, attempts: int) 
         "x-orch-provider": provider_value,
         "x-orch-fallback-attempts": str(fallback_attempts),
     }
+
+
+def _log_request_event(
+    level: int,
+    *,
+    event: str,
+    req_id: str,
+    provider: str | None,
+    attempts: int,
+    detail: str | None = None,
+) -> None:
+    provider_value = provider or "unknown"
+    message = f"{event} req_id={req_id} provider={provider_value} attempts={attempts}"
+    if detail:
+        message = f"{message} detail={detail}"
+    logger.log(level, message)
 
 
 def _estimate_text_tokens(text: str) -> int:
@@ -699,6 +718,17 @@ async def chat_completions(req: Request, body: ChatRequest):
 
     if success_response is not None and success_record is not None:
         await _log_metrics(success_record)
+        log_level = logging.WARNING if attempt_count > 1 else logging.INFO
+        event_name = (
+            "chat.completions fallback" if attempt_count > 1 else "chat.completions success"
+        )
+        _log_request_event(
+            log_level,
+            event=event_name,
+            req_id=req_id,
+            provider=last_provider,
+            attempts=attempt_count,
+        )
         headers = _make_response_headers(
             req_id=req_id, provider=last_provider, attempts=attempt_count
         )
@@ -737,6 +767,14 @@ async def chat_completions(req: Request, body: ChatRequest):
     if failure_retry_after is not None:
         failure_record["retry_after"] = failure_retry_after
     await _log_metrics(failure_record)
+    _log_request_event(
+        logging.ERROR,
+        event="chat.completions failure",
+        req_id=req_id,
+        provider=last_provider,
+        attempts=attempt_count,
+        detail=failure_error,
+    )
     error_body = _make_error_body(
         status_code=failure_status,
         message=failure_error,
