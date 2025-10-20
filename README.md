@@ -99,6 +99,17 @@ Kubernetes へデプロイする場合は、リポジトリ内の Helm チャー
 
 - すべての `/v1/chat/completions` 応答（成功・エラー・SSE）で `x-orch-request-id` / `x-orch-provider` / `x-orch-fallback-attempts` を返却します。フォールバックが発生した場合は試行回数に応じて `x-orch-fallback-attempts` が加算されます。
 
+## エラーコード
+
+| HTTPステータス | `error.code`                | 意味                             |
+|----------------|-----------------------------|----------------------------------|
+| 401            | `invalid_api_key`            | APIキー認証に失敗                 |
+| 429            | `rate_limit`                 | プロバイダまたはガードのレート制限 |
+| 5xx/BadGateway | `provider_server_error`      | プロバイダ側のサーバエラー         |
+| 4xxその他      | `provider_error` / `routing_error` | プロバイダ起因の再試行不可エラー |
+
+> 互換性: 既存クライアントは引き続き `error.type` を信頼できますが、`error.code` は上表の列挙値のみを前提に実装してください。
+
 ## ホットリロード
 
 - `_config_refresh_loop` が `ORCH_CONFIG_DIR` 配下の `providers.toml` / `router.yaml` を監視し、更新検知時に `reload_configuration()` を経由して `RoutePlanner` / `ProviderRegistry` / `ProviderGuards` を再構築します。
