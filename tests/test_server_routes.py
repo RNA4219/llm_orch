@@ -196,6 +196,56 @@ def test_chat_uses_guard_estimates_and_records_usage(
     assert fake_planner.record_failure_calls == []
 
 
+def test_stream_usage_events_record_guard_and_metrics(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+    metric_records = capture_metric_records(server_module, monkeypatch)
+    from src.orch.types import ProviderStreamChunk
+    class FakeGuard:
+        def __init__(self) -> None:
+            self.lease = object()
+            self.record_usage_calls: list[tuple[object, int, int]] = []
+
+        async def __aenter__(self) -> object:  # pragma: no cover - trivial context manager
+            return self.lease
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:  # pragma: no cover - trivial context manager
+            return None
+
+        def record_usage(
+            self,
+            lease: object,
+            *,
+            usage_prompt_tokens: int,
+            usage_completion_tokens: int,
+        ) -> float:
+            self.record_usage_calls.append((lease, usage_prompt_tokens, usage_completion_tokens))
+            return 0.0
+    route = SimpleNamespace(primary="dummy", fallback=[])
+    planner_stub = SimpleNamespace(plan=lambda task: route, record_success=lambda provider: None, record_failure=lambda provider, *, now=None: None)
+    async def _stream(*_args: object, **_kwargs: object):
+        yield ProviderStreamChunk(event_type="delta", delta={"content": "hi"})
+        yield ProviderStreamChunk(event_type="usage", usage={"prompt_tokens": 9, "completion_tokens": 5})
+        yield ProviderStreamChunk(event_type="message_stop", finish_reason="stop")
+    fake_guard = FakeGuard()
+    provider_stub = SimpleNamespace(model="dummy", chat_stream=staticmethod(_stream))
+    monkeypatch.setattr(server_module, "guards", SimpleNamespace(get=lambda name: fake_guard), raising=False)
+    monkeypatch.setattr(server_module, "planner", planner_stub, raising=False)
+    monkeypatch.setattr(server_module, "providers", SimpleNamespace(get=lambda name: provider_stub), raising=False)
+    client = TestClient(app)
+    body = {"model": "dummy", "messages": [{"role": "user", "content": "stream usage"}], "stream": True}
+    with client.stream("POST", "/v1/chat/completions", json=body) as response:
+        assert response.status_code == 200
+        for _ in response.iter_text():
+            pass
+    assert fake_guard.record_usage_calls
+    assert fake_guard.record_usage_calls[0] == (fake_guard.lease, 9, 5)
+    assert metric_records
+    record = metric_records[0]; assert record["usage_prompt"] == 9 and record["usage_completion"] == 5
+
+
 @pytest.mark.parametrize(
     "exception_factory, expected_status",
     [
