@@ -7,7 +7,7 @@ import sys
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, Mock
 
@@ -36,6 +36,12 @@ def load_app(dummy_env: str | None = None) -> FastAPI:
     return module.app
 
 
+def ensure_project_root_on_path() -> None:
+    project_root = Path(__file__).resolve().parents[1]
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+
+
 @pytest.fixture(name="route_test_config")
 def fixture_route_test_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("ORCH_CONFIG_DIR", str(tmp_path))
@@ -43,6 +49,14 @@ def fixture_route_test_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     providers_file.write_text(
         """
 [dummy]
+type = "dummy"
+model = "dummy"
+base_url = ""
+rpm = 60
+concurrency = 1
+tpm = 6000
+
+[dummy_alt]
 type = "dummy"
 model = "dummy"
 base_url = ""
@@ -61,10 +75,76 @@ defaults:
   task_header_value: "PLAN"
 routes:
   PLAN:
-    primary: dummy
+    targets:
+      - provider: dummy
+        circuit_breaker:
+          failure_threshold: 2
+          recovery_time_s: 60
+      - provider: dummy_alt
 """.strip()
     )
     return tmp_path
+
+
+def test_route_planner_skips_provider_after_consecutive_failures(
+    route_test_config: Path,
+) -> None:
+    ensure_project_root_on_path()
+    from src.orch.router import RoutePlanner, load_config
+
+    loaded = load_config(str(route_test_config), use_dummy=True)
+    planner = RoutePlanner(loaded.router, loaded.providers)
+
+    initial = planner.plan("PLAN", now=0.0)
+    assert initial.primary == "dummy"
+
+    planner.record_failure("dummy", now=1.0)
+    planner.record_failure("dummy", now=2.0)
+
+    rerouted = planner.plan("PLAN", now=3.0)
+    assert rerouted.primary == "dummy_alt"
+    assert rerouted.fallback and rerouted.fallback[0] == "dummy"
+
+
+def test_route_planner_circuit_resets_after_recovery(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from importlib import import_module
+
+    ensure_project_root_on_path()
+    from src.orch.router import RoutePlanner, load_config
+
+    loaded = load_config(str(route_test_config), use_dummy=True)
+    planner = RoutePlanner(loaded.router, loaded.providers)
+
+    router_module = import_module("src.orch.router")
+
+    current_time = [100.0]
+
+    def fake_monotonic() -> float:
+        return current_time[0]
+
+    monkeypatch.setattr(router_module.time, "monotonic", fake_monotonic)
+
+    initial = planner.plan("PLAN")
+    assert initial.primary == "dummy"
+
+    planner.record_failure("dummy")
+    current_time[0] += 1.0
+    planner.record_failure("dummy")
+    failure_time = current_time[0]
+
+    current_time[0] = failure_time + 1.0
+    blocked = planner.plan("PLAN")
+    assert blocked.primary == "dummy_alt"
+
+    current_time[0] = failure_time + 61.0
+    recovered = planner.plan("PLAN")
+    assert recovered.primary == "dummy"
+
+    state = planner._circuit_states["dummy"]
+    assert state.opened_until is None
+    assert state.failure_count == 0
 
 
 def capture_metric_records(
@@ -526,6 +606,115 @@ def test_chat_streams_events(
     body = response.text
     assert "\"delta\"" in body
     assert "data: [DONE]" in body
+
+
+def test_chat_stream_guard_uses_prompt_estimate_and_cancels_reservation(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+
+    from src.orch.rate_limiter import Guard
+
+    class TrackingGuard(Guard):
+        def __init__(self) -> None:
+            super().__init__(rpm=60, concurrency=1, tpm=128)
+            self.acquire_calls: list[int] = []
+            self.record_usage_calls: list[tuple[int, int]] = []
+
+        def acquire(self, *, estimated_prompt_tokens: int):
+            self.acquire_calls.append(estimated_prompt_tokens)
+            return super().acquire(estimated_prompt_tokens=estimated_prompt_tokens)
+
+        def record_usage(
+            self,
+            lease: object,
+            *,
+            usage_prompt_tokens: int,
+            usage_completion_tokens: int,
+        ) -> float:
+            self.record_usage_calls.append(
+                (usage_prompt_tokens, usage_completion_tokens)
+            )
+            return super().record_usage(
+                lease,
+                usage_prompt_tokens=usage_prompt_tokens,
+                usage_completion_tokens=usage_completion_tokens,
+            )
+
+    tracking_guard = TrackingGuard()
+
+    bucket = tracking_guard._tpm_bucket
+    assert bucket is not None
+
+    reserve_calls: list[int] = []
+    cancel_calls: list[int | None] = []
+
+    original_reserve = bucket.reserve
+
+    def reserve_wrapper(self: object, tokens: int, now: float):
+        reserve_calls.append(tokens)
+        return original_reserve(tokens, now)
+
+    monkeypatch.setattr(
+        bucket, "reserve", MethodType(reserve_wrapper, bucket)
+    )
+
+    original_cancel = bucket.cancel
+
+    def cancel_wrapper(self: object, reservation_id: int | None, now: float):
+        cancel_calls.append(reservation_id)
+        return original_cancel(reservation_id, now)
+
+    monkeypatch.setattr(
+        bucket, "cancel", MethodType(cancel_wrapper, bucket)
+    )
+
+    class MockProviderGuards:
+        def get(self, name: str) -> Guard:
+            assert name == "dummy"
+            return tracking_guard
+
+    monkeypatch.setattr(server_module, "guards", MockProviderGuards(), raising=False)
+
+    async def stream_chat(*_: object, **__: object):
+        yield {"event": "chunk", "data": {"choices": [{"delta": {"content": "hi"}}]}}
+        yield {"event": "done", "data": {}}
+
+    class MockProvider:
+        model = "dummy"
+
+        async def chat_stream(self, *args: object, **kwargs: object):
+            async for item in stream_chat(*args, **kwargs):
+                yield item
+
+    monkeypatch.setitem(
+        server_module.providers.providers,
+        "dummy",
+        MockProvider(),
+    )
+
+    client = TestClient(app)
+    messages = [{"role": "user", "content": "hi"}]
+    body = {
+        "model": "dummy",
+        "messages": messages,
+        "max_tokens": 64,
+        "stream": True,
+    }
+    expected_estimate = server_module._estimate_prompt_tokens(
+        messages, body["max_tokens"]
+    )
+
+    response = client.post("/v1/chat/completions", json=body)
+
+    assert response.status_code == 200
+    assert tracking_guard.acquire_calls == [expected_estimate]
+    assert reserve_calls == [expected_estimate]
+    assert cancel_calls
+    assert cancel_calls[0] is not None
+    assert tracking_guard.record_usage_calls == []
+    assert bucket._total == 0
 
 
 def test_chat_streams_provider_chunk_events(

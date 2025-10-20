@@ -35,7 +35,12 @@ def _parse_sse_payload(payload: str) -> list[tuple[str | None, str]]:
     return events
 
 
-def _collect_sse_events(monkeypatch: MonkeyPatch, stream_fn: StreamFn) -> list[tuple[str | None, str]]:
+def _collect_sse_events(
+    monkeypatch: MonkeyPatch,
+    stream_fn: StreamFn,
+    *,
+    guard_registry: Any | None = None,
+) -> list[tuple[str | None, str]]:
     app = load_app("1")
     server_module = sys.modules["src.orch.server"]
     model_name = "mock-provider"
@@ -76,7 +81,9 @@ def _collect_sse_events(monkeypatch: MonkeyPatch, stream_fn: StreamFn) -> list[t
         _Registry({model_name: SimpleNamespace(model=model_name, chat_stream=staticmethod(stream_fn))}),
         raising=False,
     )
-    monkeypatch.setattr(server_module, "guards", _Registry({model_name: _Guard()}), raising=False)
+    if guard_registry is None:
+        guard_registry = _Registry({model_name: _Guard()})
+    monkeypatch.setattr(server_module, "guards", guard_registry, raising=False)
 
     client = TestClient(app)
     body = {"model": model_name, "messages": [{"role": "user", "content": "hello"}], "stream": True}
@@ -156,3 +163,22 @@ def test_streaming_done_emitted_once_for_empty_stream(monkeypatch: MonkeyPatch) 
     events = _collect_sse_events(monkeypatch, _stream)
 
     assert events == [(None, "[DONE]")]
+
+
+def test_streaming_emits_without_guard(monkeypatch: MonkeyPatch) -> None:
+    class _MissingGuards:
+        def get(self, key: str) -> Any:  # pragma: no cover - exercised via test
+            raise KeyError(key)
+
+    async def _stream(*_args: Any, **_kwargs: Any) -> AsyncIterator[ProviderStreamChunk]:
+        yield ProviderStreamChunk(event_type="delta", delta={"content": "hi"})
+
+    events = _collect_sse_events(
+        monkeypatch,
+        _stream,
+        guard_registry=_MissingGuards(),
+    )
+
+    assert events[-1] == (None, "[DONE]")
+    named = [name for name, _ in events if name]
+    assert named[0] == "chat.completion.chunk"

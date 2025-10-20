@@ -50,14 +50,16 @@ curl -s -H "Content-Type: application/json" \
 - `ORCH_CORS_ALLOW_ORIGINS` : カンマ区切りの許可Origin。
 - `ORCH_RETRY_AFTER_SECONDS` : `Retry-After` ヘッダ欠如時のフォールバック秒数（既定30秒）。
 - `ORCH_CONFIG_REFRESH_INTERVAL` : 設定ファイル変更を監視するポーリング間隔（秒）。既定30秒。`0` でポーリング毎ループ。
-- `ORCH_OTEL_METRICS_EXPORT` : OpenTelemetryメトリクスの送出を有効化。真値（`1`/`true`/`yes`/`on`）で `requests_total` と `latency_ms` をエクスポート（例: `export ORCH_OTEL_METRICS_EXPORT=1`）。
+- `ORCH_METRICS_EXPORT_MODE` : メトリクス出力モード。`prom`（Prometheusのみ）/`otel`（OTelのみ）/`both`（両方）。既定は `prom`。後方互換として `ORCH_OTEL_METRICS_EXPORT` を真値にすると `both` 相当になります。
+- `ORCH_OTEL_METRICS_EXPORT` : OpenTelemetryメトリクスを旧来通り有効化する互換フラグ。`ORCH_METRICS_EXPORT_MODE` 未設定時のみ参照されます。
 
 ## メトリクス
 
 - 既定は `metrics/requests-YYYYMMDD.jsonl` に 1リクエスト=1行追記。
+- Prometheusモード（`prom`/`both`）では同ディレクトリに `metrics/prometheus.prom` をエクスポート。
 - フィールド: `ts, req_id, task, provider, model, latency_ms, ok, status, error, retries, usage_prompt, usage_completion`
 - Prometheusエンドポイント: `GET /metrics` （`orch_requests_total` カウンタ / `orch_request_latency_seconds` ヒストグラム）。`ORCH_INBOUND_API_KEYS` を設定した場合は同じキーで保護されます。
-- OpenTelemetryエクスポートを有効化するには `ORCH_OTEL_METRICS_EXPORT` を真値で設定（例: `export ORCH_OTEL_METRICS_EXPORT=1`）。有効時は `requests_total` カウンタと `latency_ms` ヒストグラムを、プロバイダ/HTTPステータス/成功可否を属性として送出します。`MetricsLogger` はJSONL書き込み時に同じレコードをOpenTelemetryにも流し、`flush()` 呼び出しで強制エクスポートします。
+- OpenTelemetryエクスポートは `ORCH_METRICS_EXPORT_MODE` を `otel`/`both` にするか、互換フラグ `ORCH_OTEL_METRICS_EXPORT=1` を設定すると有効化され、`requests_total` カウンタと `latency_ms` ヒストグラムをプロバイダ/HTTPステータス/成功可否属性付きで送出します。`MetricsLogger` はJSONL書き込み時に同じレコードをOpenTelemetryにも流し、`flush()` 呼び出しで強制エクスポートします。
 
 ## ストリーミングフォーマット
 

@@ -182,6 +182,23 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for test environment
 from src.orch.metrics import MetricsLogger
 
 
+def _sample_record() -> dict[str, Any]:
+    return {
+        "req_id": "req-1",
+        "ts": 1.0,
+        "task": "demo",
+        "provider": "provider-a",
+        "model": "model-x",
+        "latency_ms": 123.0,
+        "ok": True,
+        "status": 200,
+        "error": None,
+        "usage_prompt": 1,
+        "usage_completion": 2,
+        "retries": 0,
+    }
+
+
 @pytest.fixture
 def anyio_backend() -> str:
     return "asyncio"
@@ -189,26 +206,13 @@ def anyio_backend() -> str:
 
 @pytest.mark.anyio
 async def test_metrics_logger_records_opentelemetry_samples(tmp_path, monkeypatch):
-    monkeypatch.setenv("ORCH_OTEL_METRICS_EXPORT", "1")
+    monkeypatch.setenv("ORCH_METRICS_EXPORT_MODE", "both")
     reader = InMemoryMetricReader()
     MetricsLogger.configure_metric_reader(reader)
 
     try:
         logger = MetricsLogger(str(tmp_path))
-        record = {
-            "req_id": "req-1",
-            "ts": 1.0,
-            "task": "demo",
-            "provider": "provider-a",
-            "model": "model-x",
-            "latency_ms": 123.0,
-            "ok": True,
-            "status": 200,
-            "error": None,
-            "usage_prompt": 1,
-            "usage_completion": 2,
-            "retries": 0,
-        }
+        record = _sample_record()
         await logger.write(record)
         await logger.flush()
 
@@ -231,6 +235,50 @@ async def test_metrics_logger_records_opentelemetry_samples(tmp_path, monkeypatc
             getattr(dp, "count", 0) == 1 and pytest.approx(getattr(dp, "sum", 0.0)) == record["latency_ms"]
             for dp in histogram_points
         )
+        prom_path = Path(tmp_path) / "prometheus.prom"
+        assert prom_path.exists(), "Prometheus export should be written in both mode"
+        prom_text = prom_path.read_text(encoding="utf-8")
+        assert "orch_requests_total" in prom_text
+        assert "orch_request_latency_seconds" in prom_text
     finally:
         MetricsLogger.configure_metric_reader(None)
-        monkeypatch.delenv("ORCH_OTEL_METRICS_EXPORT", raising=False)
+        monkeypatch.delenv("ORCH_METRICS_EXPORT_MODE", raising=False)
+
+
+@pytest.mark.anyio
+async def test_metrics_logger_prometheus_only_mode(tmp_path, monkeypatch):
+    monkeypatch.delenv("ORCH_OTEL_METRICS_EXPORT", raising=False)
+    monkeypatch.setenv("ORCH_METRICS_EXPORT_MODE", "prom")
+    MetricsLogger.configure_metric_reader(None)
+
+    logger = MetricsLogger(str(tmp_path))
+    record = _sample_record()
+    await logger.write(record)
+
+    prom_path = Path(tmp_path) / "prometheus.prom"
+    assert prom_path.exists(), "Prometheus output should be generated in prom mode"
+    prom_text = prom_path.read_text(encoding="utf-8")
+    assert "provider=\"provider-a\"" in prom_text
+    assert logger._otel is None
+
+
+@pytest.mark.anyio
+async def test_metrics_logger_otel_only_mode(tmp_path, monkeypatch):
+    monkeypatch.setenv("ORCH_METRICS_EXPORT_MODE", "otel")
+    reader = InMemoryMetricReader()
+    MetricsLogger.configure_metric_reader(reader)
+
+    try:
+        logger = MetricsLogger(str(tmp_path))
+        record = _sample_record()
+        await logger.write(record)
+        await logger.flush()
+
+        prom_path = Path(tmp_path) / "prometheus.prom"
+        assert not prom_path.exists(), "Prometheus file must not be created in otel-only mode"
+
+        metrics_data = reader.get_metrics_data()
+        assert metrics_data.resource_metrics, "OTel metrics should be recorded in otel-only mode"
+    finally:
+        MetricsLogger.configure_metric_reader(None)
+        monkeypatch.delenv("ORCH_METRICS_EXPORT_MODE", raising=False)

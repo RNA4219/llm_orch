@@ -4,6 +4,8 @@ import os
 import time
 import uuid
 from collections import defaultdict
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -263,6 +265,32 @@ def _error_type_from_status(status: int | None) -> str:
     return "provider_error"
 
 
+def _make_error_body(
+    *,
+    status_code: int,
+    message: str,
+    error_type: str,
+    retry_after: int | None = None,
+    code: str | None = None,
+) -> dict[str, Any]:
+    resolved_code = code
+    if resolved_code is None:
+        if status_code == 401:
+            resolved_code = "invalid_api_key"
+        elif status_code == 429:
+            resolved_code = "rate_limit"
+        else:
+            resolved_code = error_type
+    payload: dict[str, Any] = {
+        "message": message,
+        "type": error_type,
+        "code": resolved_code,
+    }
+    if retry_after is not None:
+        payload["retry_after"] = retry_after
+    return {"error": payload}
+
+
 def _require_api_key(req: Request) -> None:
     if not INBOUND_API_KEYS:
         return
@@ -341,7 +369,21 @@ async def metrics_endpoint(req: Request) -> Response:
 
 @app.post("/v1/chat/completions")
 async def chat_completions(req: Request, body: ChatRequest):
-    _require_api_key(req)
+    try:
+        _require_api_key(req)
+    except HTTPException as exc:
+        if exc.status_code != 401:
+            raise
+        req_id = str(uuid.uuid4())
+        headers = _make_response_headers(req_id=req_id, provider=None, attempts=0)
+        detail = exc.detail if isinstance(exc.detail, str) else "missing or invalid api key"
+        error_body = _make_error_body(
+            status_code=exc.status_code,
+            message=detail,
+            error_type="authentication_error",
+            code="invalid_api_key",
+        )
+        return JSONResponse(error_body, status_code=exc.status_code, headers=headers)
     header_value = (
         req.headers.get(cfg.router.defaults.task_header)
         if cfg.router.defaults.task_header
@@ -420,8 +462,12 @@ async def chat_completions(req: Request, body: ChatRequest):
             "retries": 0,
         })
         headers = _make_response_headers(req_id=req_id, provider=None, attempts=0)
-        error_payload = {"message": detail, "type": "routing_error"}
-        return JSONResponse({"error": error_payload}, status_code=400, headers=headers)
+        error_body = _make_error_body(
+            status_code=400,
+            message=detail,
+            error_type="routing_error",
+        )
+        return JSONResponse(error_body, status_code=400, headers=headers)
     if body.stream:
         return await _stream_chat_response(
             model=body.model,
@@ -431,6 +477,7 @@ async def chat_completions(req: Request, body: ChatRequest):
             start=start,
             normalized_messages=normalized_messages,
             provider_kwargs=provider_kwargs,
+            estimated_prompt_tokens=estimated_prompt_tokens,
         )
     last_err: str | None = None
     usage_prompt = 0
@@ -583,18 +630,41 @@ async def chat_completions(req: Request, body: ChatRequest):
     if failure_retry_after is not None:
         failure_record["retry_after"] = failure_retry_after
     await _log_metrics(failure_record)
-    error_payload: dict[str, Any] = {
-        "message": failure_error,
-        "type": failure_error_type,
-    }
-    if failure_retry_after is not None:
-        error_payload["retry_after"] = failure_retry_after
+    error_body = _make_error_body(
+        status_code=failure_status,
+        message=failure_error,
+        error_type=failure_error_type,
+        retry_after=failure_retry_after,
+    )
     headers = _make_response_headers(
         req_id=req_id, provider=last_provider, attempts=attempt_count
     )
-    return JSONResponse(
-        {"error": error_payload}, status_code=failure_status, headers=headers
-    )
+    return JSONResponse(error_body, status_code=failure_status, headers=headers)
+
+
+@asynccontextmanager
+async def _guard_context(
+    guard: Any | None,
+    *,
+    estimated_prompt_tokens: int,
+) -> AsyncIterator[Any]:
+    if guard is None:
+        yield None
+        return
+    acquire = getattr(guard, "acquire", None)
+    if callable(acquire):
+        try:
+            context = acquire(estimated_prompt_tokens=estimated_prompt_tokens)
+        except TypeError:
+            context = acquire()
+        async with context as lease:
+            yield lease
+            return
+    if hasattr(guard, "__aenter__") and hasattr(guard, "__aexit__"):
+        async with guard as lease:
+            yield lease
+            return
+    yield None
 
 
 async def _stream_chat_response(
@@ -606,6 +676,7 @@ async def _stream_chat_response(
     start: float,
     normalized_messages: list[dict[str, Any]],
     provider_kwargs: dict[str, Any],
+    estimated_prompt_tokens: int,
 ) -> JSONResponse | StreamingResponse:
     providers_to_try = [route.primary] + route.fallback
     if not providers_to_try:
@@ -745,7 +816,10 @@ async def _stream_chat_response(
             last_error_type = "provider_error"
             last_retry_after = None
             continue
-        guard = guards.get(provider_name)
+        try:
+            guard = guards.get(provider_name)
+        except KeyError:
+            guard = None
         queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
         usage_prompt_tokens = usage_completion_tokens = 0
         usage_recorded = False
