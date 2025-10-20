@@ -36,6 +36,63 @@ curl -s -H "Content-Type: application/json" \
   http://localhost:31001/v1/chat/completions | jq .
 ```
 
+<!-- schema: ChatRequest -->
+```json
+{
+  "model": "gpt-4o-mini",
+  "messages": [
+    {"role": "system", "content": "You are a concise assistant."},
+    {"role": "user", "content": "最新のオーダー状況を教えて。"}
+  ],
+  "temperature": 0.2,
+  "max_tokens": 512,
+  "stream": true,
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "lookup_order_status",
+        "description": "注文IDから現在の出荷状況を取得する",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "order_id": {"type": "string"}
+          },
+          "required": ["order_id"]
+        }
+      }
+    }
+  ],
+  "tool_choice": "auto",
+  "top_p": 0.9
+}
+```
+
+## Docker
+
+```bash
+# ビルド（config/ 以下のサンプルを同梱）
+docker build -t llm-orch:dev .
+
+# 起動（ports:8000、config/ を read-only マウント）
+docker compose up --build
+
+# バックグラウンド
+docker compose up -d
+```
+
+`docker compose` の環境変数は `.env` または `docker compose --env-file` で差し替え可能です。例:
+
+```bash
+# ダミー → 本番プロバイダ設定に切り替え
+cp config/providers.dummy.toml config/providers.toml  # 必要に応じて編集
+ORCH_USE_DUMMY=0 ORCH_CONFIG_DIR=/app/config docker compose up --build
+
+# APIキーを追加
+echo "ORCH_INBOUND_API_KEYS=sk-local-1" >> .env
+docker compose up
+```
+
 ## 設定
 
 - `config/providers.toml` : プロバイダ定義（`type` / `base_url` / `model` / `auth_env` / `rpm` / `tpm` / `concurrency`）
@@ -52,6 +109,12 @@ curl -s -H "Content-Type: application/json" \
 - `ORCH_CONFIG_REFRESH_INTERVAL` : 設定ファイル変更を監視するポーリング間隔（秒）。既定30秒。`0` でポーリング毎ループ。
 - `ORCH_METRICS_EXPORT_MODE` : メトリクス出力モード。`prom`（Prometheusのみ）/`otel`（OTelのみ）/`both`（両方）。既定は `prom`。後方互換として `ORCH_OTEL_METRICS_EXPORT` を真値にすると `both` 相当になります。
 - `ORCH_OTEL_METRICS_EXPORT` : OpenTelemetryメトリクスを旧来通り有効化する互換フラグ。`ORCH_METRICS_EXPORT_MODE` 未設定時のみ参照されます。
+
+## セキュリティ
+
+- 本番環境では `ORCH_INBOUND_API_KEYS` によるAPIキー保護を必須運用とし、キー未設定時はアプリケーションログに警告が出力されることを監視してください。
+- 既定の `ORCH_CORS_ALLOW_ORIGINS` は空文字列（=許可Originなし）であり、必要なOriginのみを明示的に列挙してください。
+- APIキー値など機密情報はレスポンスやHTTPヘッダに含めず、ログにも平文で記録されません。APIキー保護を無効化した場合のみ警告ログが出力されます。
 
 ## メトリクス
 
@@ -72,6 +135,17 @@ curl -s -H "Content-Type: application/json" \
 ## レスポンスヘッダ
 
 - すべての `/v1/chat/completions` 応答（成功・エラー・SSE）で `x-orch-request-id` / `x-orch-provider` / `x-orch-fallback-attempts` を返却します。フォールバックが発生した場合は試行回数に応じて `x-orch-fallback-attempts` が加算されます。
+
+## エラーコード
+
+| HTTPステータス | `error.code`                | 意味                             |
+|----------------|-----------------------------|----------------------------------|
+| 401            | `invalid_api_key`            | APIキー認証に失敗                 |
+| 429            | `rate_limit`                 | プロバイダまたはガードのレート制限 |
+| 5xx/BadGateway | `provider_server_error`      | プロバイダ側のサーバエラー         |
+| 4xxその他      | `provider_error` / `routing_error` | プロバイダ起因の再試行不可エラー |
+
+> 互換性: 既存クライアントは引き続き `error.type` を信頼できますが、`error.code` は上表の列挙値のみを前提に実装してください。
 
 ## ホットリロード
 
