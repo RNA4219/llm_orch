@@ -6,6 +6,8 @@ import os
 import sys
 from collections.abc import Callable
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 from pathlib import Path
 from types import MethodType, SimpleNamespace
 from typing import TYPE_CHECKING, Any
@@ -170,6 +172,168 @@ def assert_orch_headers(
     assert response.headers["x-orch-fallback-attempts"] == fallback_attempts
 
 
+def test_chat_respects_sticky_headers(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    providers_file = route_test_config / "providers.dummy.toml"
+    providers_file.write_text(
+        """
+[dummy_a]
+type = "dummy"
+model = "dummy"
+base_url = ""
+rpm = 60
+concurrency = 1
+tpm = 6000
+
+[dummy_b]
+type = "dummy"
+model = "dummy"
+base_url = ""
+rpm = 60
+concurrency = 1
+tpm = 6000
+
+[dummy_c]
+type = "dummy"
+model = "dummy"
+base_url = ""
+rpm = 60
+concurrency = 1
+tpm = 6000
+""".strip()
+    )
+    router_file = route_test_config / "router.yaml"
+    router_file.write_text(
+        """
+defaults:
+  temperature: 0.2
+  max_tokens: 64
+  task_header: "x-orch-task-kind"
+  task_header_value: "PLAN"
+routes:
+  PLAN:
+    strategy: sticky
+    sticky_ttl: 5
+    targets:
+      - provider: dummy_a
+      - provider: dummy_b
+      - provider: dummy_c
+""".strip()
+    )
+
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+
+    from src.orch.types import ProviderChatResponse
+
+    class FakePlanner:
+        def __init__(self, providers: list[str], *, ttl: float) -> None:
+            self.providers = providers
+            self.ttl = ttl
+            self.now = 0.0
+            self._assignments: dict[str, tuple[str, float]] = {}
+            self._rotation = 0
+            self.plan_calls: list[tuple[str, str | None, float]] = []
+
+        def _next_provider(self) -> str:
+            provider = self.providers[self._rotation % len(self.providers)]
+            self._rotation += 1
+            return provider
+
+        def plan(self, task: str, *, sticky_key: str | None = None) -> SimpleNamespace:
+            self.plan_calls.append((task, sticky_key, self.now))
+            if sticky_key:
+                assignment = self._assignments.get(sticky_key)
+                if assignment is not None and assignment[1] > self.now:
+                    provider = assignment[0]
+                else:
+                    provider = self._next_provider()
+                    self._assignments[sticky_key] = (provider, self.now + self.ttl)
+            else:
+                provider = self._next_provider()
+            fallback = [name for name in self.providers if name != provider]
+            return SimpleNamespace(primary=provider, fallback=fallback)
+
+        def record_success(self, provider: str) -> None:
+            pass
+
+        def record_failure(self, provider: str, *, now: float | None = None) -> None:
+            pass
+
+    fake_planner = FakePlanner(["dummy_a", "dummy_b", "dummy_c"], ttl=5.0)
+    monkeypatch.setattr(server_module, "planner", fake_planner, raising=False)
+
+    @asynccontextmanager
+    async def guard_ctx() -> Any:
+        yield object()
+
+    class FakeGuard:
+        def acquire(self, **_: object):
+            return guard_ctx()
+
+        def record_usage(
+            self,
+            lease: object,
+            *,
+            usage_prompt_tokens: int,
+            usage_completion_tokens: int,
+        ) -> float:
+            return 0.0
+
+    class FakeGuards:
+        def get(self, name: str) -> FakeGuard:
+            return FakeGuard()
+
+    monkeypatch.setattr(server_module, "guards", FakeGuards(), raising=False)
+
+    server_module.providers.providers.clear()
+
+    def make_provider(name: str) -> SimpleNamespace:
+        async def chat(*_: object, **__: object) -> ProviderChatResponse:
+            return ProviderChatResponse(status_code=200, model=name, content=name)
+
+        return SimpleNamespace(model=name, chat=chat)
+
+    for provider_name in ["dummy_a", "dummy_b", "dummy_c"]:
+        monkeypatch.setitem(
+            server_module.providers.providers,
+            provider_name,
+            make_provider(provider_name),
+        )
+
+    client = TestClient(app)
+    request_body = {
+        "model": "dummy",
+        "messages": [{"role": "user", "content": "hi"}],
+    }
+
+    def post_with(headers: dict[str, str], *, now: float) -> httpx.Response:
+        fake_planner.now = now
+        return client.post("/v1/chat/completions", headers=headers, json=request_body)
+
+    first = post_with({"x-orch-sticky-key": "user-1"}, now=0.0)
+    repeat = post_with({"x-orch-sticky-key": "user-1"}, now=1.0)
+    other_key = post_with({"x-orch-sticky-key": "user-2"}, now=1.5)
+    expired = post_with({"X-Orch-Session": "user-1"}, now=10.0)
+
+    for response in (first, repeat, other_key, expired):
+        assert response.status_code == 200
+
+    assert first.headers["x-orch-provider"] == "dummy_a"
+    assert repeat.headers["x-orch-provider"] == "dummy_a"
+    assert other_key.headers["x-orch-provider"] == "dummy_b"
+    assert expired.headers["x-orch-provider"] == "dummy_c"
+
+    assert [call[1] for call in fake_planner.plan_calls] == [
+        "user-1",
+        "user-1",
+        "user-2",
+        "user-1",
+    ]
+    assert fake_planner.plan_calls[-1][2] == 10.0
+
+
 def test_chat_uses_guard_estimates_and_records_usage(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -213,7 +377,7 @@ def test_chat_uses_guard_estimates_and_records_usage(
             self.record_success_calls: list[str] = []
             self.record_failure_calls: list[str] = []
 
-        def plan(self, task: str):
+        def plan(self, task: str, *, sticky_key: str | None = None):
             self.plan_calls.append(task)
 
             class _Route:
@@ -382,7 +546,7 @@ def test_chat_records_planner_failure_on_guarded_errors(
             self.record_success_calls: list[str] = []
             self.record_failure_calls: list[str] = []
 
-        def plan(self, task: str):
+        def plan(self, task: str, *, sticky_key: str | None = None):
 
             class _Route:
                 primary = "dummy"
@@ -521,7 +685,7 @@ def test_chat_failure_response_includes_orch_headers_after_fallback(
     monkeypatch.setattr(server_module, "MAX_PROVIDER_ATTEMPTS", 1)
 
     route = SimpleNamespace(primary="primary", fallback=["fallback"])
-    monkeypatch.setattr(server_module.planner, "plan", lambda *_: route)
+    monkeypatch.setattr(server_module.planner, "plan", lambda _task, *, sticky_key=None: route)
 
     failure = AsyncMock(side_effect=RuntimeError("boom"))
     primary_provider = SimpleNamespace(model="primary-model", chat=failure)
@@ -759,6 +923,102 @@ def test_chat_streams_provider_chunk_events(
     body = response.text
     assert "data: {\"choices\":" in body
     assert "data: [DONE]" in body
+
+def _make_http_status_error(status: int, retry_after: str | None = None) -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "https://dummy.test")
+    headers: dict[str, str] = {} if retry_after is None else {"Retry-After": retry_after}
+    response = httpx.Response(status, headers=headers, request=request)
+    return httpx.HTTPStatusError("error", request=request, response=response)
+
+
+@pytest.mark.parametrize(
+    "retry_after_seconds, use_http_date",
+    [(37, False), (90, True)],
+)
+def test_chat_stream_rate_limit_retry_after(
+    route_test_config: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    retry_after_seconds: int,
+    use_http_date: bool,
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+    header_value = str(retry_after_seconds)
+    if use_http_date:
+        freeze_now = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+        header_value = format_datetime(freeze_now + timedelta(seconds=retry_after_seconds))
+        monkeypatch.setattr(server_module, "datetime", SimpleNamespace(now=lambda *_: freeze_now))
+
+    class MockProvider:
+        model = "dummy"
+        async def chat_stream(self, *args: object, **kwargs: object):
+            raise _make_http_status_error(429, header_value)
+    monkeypatch.setitem(server_module.providers.providers, "dummy", MockProvider())
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "dummy", "messages": [{"role": "user", "content": "hi"}], "stream": True},
+    )
+    assert response.status_code == 429
+    assert_orch_headers(response, provider="dummy", fallback_attempts="0")
+    payload = response.json()
+    assert payload["error"]["retry_after"] == retry_after_seconds
+    assert payload["error"]["type"] == "rate_limit"
+
+
+def test_chat_stream_fallback_chain_returns_final_failure(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+    guard = server_module.guards.get("dummy")
+    monkeypatch.setattr(server_module.guards, "get", lambda *_args, **_kwargs: guard)
+    monkeypatch.setattr(server_module, "MAX_PROVIDER_ATTEMPTS", 1)
+    route = SimpleNamespace(primary="primary", fallback=["secondary"])
+    monkeypatch.setattr(server_module.planner, "plan", lambda *_: route)
+    failure_calls: list[str] = []
+    monkeypatch.setattr(
+        server_module.planner,
+        "record_failure",
+        lambda provider: failure_calls.append(provider),
+    )
+
+    def _stream_error(exc: Exception):
+        async def _gen() -> Any:
+            raise exc
+            if False:
+                yield None
+        return _gen()
+    providers_map = {
+        name: type(
+            f"{name.title()}Provider",
+            (),
+            {
+                "model": f"{name}-model",
+                "chat_stream": lambda self, *args, _exc=exc, **kwargs: _stream_error(_exc),
+            },
+        )()
+        for name, exc in (
+            ("primary", _make_http_status_error(503)),
+            ("secondary", RuntimeError("fallback failed")),
+        )
+    }
+    for name, provider in providers_map.items():
+        monkeypatch.setitem(server_module.providers.providers, name, provider)
+
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "req-model", "messages": [{"role": "user", "content": "hi"}], "stream": True},
+    )
+    assert response.status_code == 502
+    assert_orch_headers(response, provider="secondary", fallback_attempts="1")
+    payload = response.json()
+    assert payload["error"]["message"] == "fallback failed"
+    assert payload["error"]["type"] == "provider_server_error"
+    assert payload["error"]["retry_after"] == server_module.DEFAULT_RETRY_AFTER_SECONDS
+    assert failure_calls == ["primary", "secondary"]
+
 
 def test_chat_accepts_tool_role_messages(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
@@ -1879,11 +2139,13 @@ def test_chat_missing_header_routes_to_task_header_default(
     from src.orch.router import RouteDef as RouterRouteDef, RoutePlanner as RouterRoutePlanner
 
     recorded_tasks: list[str] = []
-    original_plan: Callable[[RouterRoutePlanner, str], RouterRouteDef] = RouterRoutePlanner.plan
+    original_plan = RouterRoutePlanner.plan
 
-    def recording_plan(self: RouterRoutePlanner, task: str) -> RouterRouteDef:
+    def recording_plan(
+        self: RouterRoutePlanner, task: str, *, sticky_key: str | None = None
+    ) -> RouterRouteDef:
         recorded_tasks.append(task)
-        return original_plan(self, task)
+        return original_plan(self, task, sticky_key=sticky_key)
 
     monkeypatch.setattr(RouterRoutePlanner, "plan", recording_plan)
     response = client.post(
@@ -1920,11 +2182,13 @@ routes:
     from src.orch.router import RouteDef as RouterRouteDef, RoutePlanner as RouterRoutePlanner
 
     recorded_tasks: list[str] = []
-    original_plan: Callable[[RouterRoutePlanner, str], RouterRouteDef] = RouterRoutePlanner.plan
+    original_plan = RouterRoutePlanner.plan
 
-    def recording_plan(self: RouterRoutePlanner, task: str) -> RouterRouteDef:
+    def recording_plan(
+        self: RouterRoutePlanner, task: str, *, sticky_key: str | None = None
+    ) -> RouterRouteDef:
         recorded_tasks.append(task)
-        return original_plan(self, task)
+        return original_plan(self, task, sticky_key=sticky_key)
 
     monkeypatch.setattr(RouterRoutePlanner, "plan", recording_plan)
 
