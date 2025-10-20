@@ -1,6 +1,7 @@
 import os
 import random
 import time
+import warnings
 from dataclasses import dataclass, field
 from typing import Dict, Literal, Sequence
 
@@ -243,7 +244,7 @@ def load_config(config_dir: str, use_dummy: bool=False) -> LoadedConfig:
         ),
         routes=routes_cfg,
     )
-    validate_router_config(router, providers)
+    validate_router_config(router, providers, allow_missing=use_dummy)
     mtimes = {
         "providers": os.stat(prov_path).st_mtime,
         "router": os.stat(router_path).st_mtime,
@@ -256,34 +257,55 @@ def load_config(config_dir: str, use_dummy: bool=False) -> LoadedConfig:
     )
 
 
-def validate_router_config(router: RouterConfig, providers: Dict[str, ProviderDef]) -> None:
+def validate_router_config(
+    router: RouterConfig, providers: Dict[str, ProviderDef], *, allow_missing: bool = False
+) -> None:
     for route_name, route in router.routes.items():
         if not route.targets:
             raise ValueError(f"Route '{route_name}' must specify at least one provider")
         primary_name = route.targets[0].provider
         has_known_provider = False
+        missing_providers: list[str] = []
         for target in route.targets:
             provider_name = target.provider
             if provider_name not in providers:
+                missing_providers.append(provider_name)
                 continue
             has_known_provider = True
+        available = ", ".join(sorted(providers)) or "<none>"
         if primary_name not in providers:
-            available = ", ".join(sorted(providers)) or "<none>"
-            raise ValueError(
+            message = (
                 "Route '{route}' references undefined provider '{provider}'. Available providers: {available}".format(
                     route=route_name,
                     provider=primary_name,
                     available=available,
                 )
             )
+            if allow_missing:
+                warnings.warn(message, UserWarning, stacklevel=2)
+            else:
+                raise ValueError(message)
         if not has_known_provider:
-            available = ", ".join(sorted(providers)) or "<none>"
-            raise ValueError(
+            message = (
                 "Route '{route}' references undefined provider '{provider}'. Available providers: {available}".format(
                     route=route_name,
                     provider=primary_name,
                     available=available,
                 )
+            )
+            if allow_missing:
+                warnings.warn(message, UserWarning, stacklevel=2)
+            else:
+                raise ValueError(message)
+        elif allow_missing and missing_providers:
+            warnings.warn(
+                "Route '{route}' references undefined provider(s): {missing}. Available providers: {available}".format(
+                    route=route_name,
+                    missing=", ".join(sorted(set(missing_providers))),
+                    available=available,
+                ),
+                UserWarning,
+                stacklevel=2,
             )
 
 class RoutePlanner:
