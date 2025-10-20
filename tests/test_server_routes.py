@@ -88,6 +88,22 @@ routes:
     return tmp_path
 
 
+def _write_single_provider_router(route_test_config: Path) -> None:
+    router_file = route_test_config / "router.yaml"
+    router_file.write_text(
+        """
+defaults:
+  temperature: 0.2
+  max_tokens: 64
+  task_header: "x-orch-task-kind"
+  task_header_value: "PLAN"
+routes:
+  PLAN:
+    primary: dummy
+""".strip()
+    )
+
+
 def test_route_planner_skips_provider_after_consecutive_failures(
     route_test_config: Path,
 ) -> None:
@@ -613,6 +629,7 @@ def test_chat_releases_guard_usage_on_provider_exception(
     exception_factory: Callable[[], Exception],
     expected_status: int,
 ) -> None:
+    _write_single_provider_router(route_test_config)
     app = load_app("1")
     server_module = sys.modules["src.orch.server"]
 
@@ -670,7 +687,7 @@ def test_chat_releases_guard_usage_on_provider_exception(
     assert bucket._total == 0
 
 
-def test_chat_failure_response_includes_orch_headers_after_fallback(
+def test_chat_failure_response_includes_orch_headers_when_guard_blocks_fallback(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     app = load_app("1")
@@ -687,9 +704,10 @@ def test_chat_failure_response_includes_orch_headers_after_fallback(
     route = SimpleNamespace(primary="primary", fallback=["fallback"])
     monkeypatch.setattr(server_module.planner, "plan", lambda _task, *, sticky_key=None: route)
 
-    failure = AsyncMock(side_effect=RuntimeError("boom"))
-    primary_provider = SimpleNamespace(model="primary-model", chat=failure)
-    fallback_provider = SimpleNamespace(model="fallback-model", chat=failure)
+    primary_failure = AsyncMock(side_effect=RuntimeError("boom"))
+    fallback_failure = AsyncMock(side_effect=RuntimeError("boom"))
+    primary_provider = SimpleNamespace(model="primary-model", chat=primary_failure)
+    fallback_provider = SimpleNamespace(model="fallback-model", chat=fallback_failure)
     monkeypatch.setitem(server_module.providers.providers, "primary", primary_provider)
     monkeypatch.setitem(server_module.providers.providers, "fallback", fallback_provider)
 
@@ -700,7 +718,8 @@ def test_chat_failure_response_includes_orch_headers_after_fallback(
     )
 
     assert response.status_code == 502
-    assert_orch_headers(response, provider="fallback", fallback_attempts="1")
+    assert_orch_headers(response, provider="primary", fallback_attempts="0")
+    assert fallback_failure.call_count == 0
 
 
 def test_chat_failure_response_includes_headers_for_unroutable_task(
@@ -775,6 +794,7 @@ def test_chat_streams_events(
 def test_chat_stream_guard_uses_prompt_estimate_and_cancels_reservation(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _write_single_provider_router(route_test_config)
     app = load_app("1")
     server_module = sys.modules["src.orch.server"]
 
@@ -941,6 +961,7 @@ def test_chat_stream_rate_limit_retry_after(
     retry_after_seconds: int,
     use_http_date: bool,
 ) -> None:
+    _write_single_provider_router(route_test_config)
     app = load_app("1")
     server_module = sys.modules["src.orch.server"]
     header_value = str(retry_after_seconds)
@@ -1911,6 +1932,7 @@ rpm = 60
 concurrency = 1
 """.strip()
     )
+    _write_single_provider_router(route_test_config)
 
     app = load_app("1")
     server_module = sys.modules["src.orch.server"]
@@ -1964,6 +1986,7 @@ rpm = 60
 concurrency = 1
 """.strip()
     )
+    _write_single_provider_router(route_test_config)
 
     app = load_app("1")
     server_module = sys.modules["src.orch.server"]
@@ -1995,9 +2018,35 @@ concurrency = 1
     assert records[-1]["model"] == "req-model"
 
 
+def test_dummy_config_missing_provider_warns(route_test_config: Path) -> None:
+    ensure_project_root_on_path()
+    providers_file = route_test_config / "providers.dummy.toml"
+    providers_file.write_text(
+        """
+[dummy]
+type = "dummy"
+model = "dummy"
+base_url = ""
+rpm = 60
+concurrency = 1
+""".strip()
+    )
+
+    from src.orch.router import RoutePlanner, load_config
+
+    with pytest.warns(UserWarning, match="dummy_alt"):
+        loaded = load_config(str(route_test_config), use_dummy=True)
+
+    planner = RoutePlanner(loaded.router, loaded.providers)
+    selection = planner.plan("PLAN")
+    assert selection.primary == "dummy"
+    assert "dummy_alt" not in loaded.providers
+
+
 def test_chat_metrics_records_status_bad_gateway_on_total_failure(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _write_single_provider_router(route_test_config)
     app = load_app("1")
     server_module = sys.modules["src.orch.server"]
     records = capture_metric_records(server_module, monkeypatch)
@@ -2042,6 +2091,7 @@ rpm = 60
 concurrency = 1
 """.strip()
     )
+    _write_single_provider_router(route_test_config)
 
     app = load_app("1")
     server_module = sys.modules["src.orch.server"]
@@ -2325,6 +2375,7 @@ def test_chat_metrics_routing_error_usage_zero(
 def test_chat_metrics_provider_error_includes_req_id(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _write_single_provider_router(route_test_config)
     app = load_app("1")
     server_module = sys.modules["src.orch.server"]
     records = capture_metric_records(server_module, monkeypatch)
@@ -2356,6 +2407,7 @@ def test_chat_metrics_provider_error_includes_req_id(
 def test_chat_metrics_provider_error_usage_zero(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _write_single_provider_router(route_test_config)
     app = load_app("1")
     server_module = sys.modules["src.orch.server"]
     records = capture_metric_records(server_module, monkeypatch)
@@ -2391,6 +2443,7 @@ def test_chat_metrics_provider_error_usage_zero(
 def test_chat_metrics_provider_error_records_status_502(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _write_single_provider_router(route_test_config)
     app = load_app("1")
     server_module = sys.modules["src.orch.server"]
     records = capture_metric_records(server_module, monkeypatch)

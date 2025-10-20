@@ -585,6 +585,8 @@ async def chat_completions(req: Request, body: ChatRequest):
     abort_error_type: str | None = None
     abort_retry_after: int | None = None
     for provider_name in [route.primary] + route.fallback:
+        if attempt_count >= MAX_PROVIDER_ATTEMPTS:
+            break
         try:
             prov = providers.get(provider_name)
         except KeyError:
@@ -593,7 +595,10 @@ async def chat_completions(req: Request, body: ChatRequest):
             guard = guards.get(provider_name)
         except (AssertionError, KeyError):
             continue
+        should_abort = False
         for attempt in range(1, MAX_PROVIDER_ATTEMPTS + 1):
+            if attempt_count >= MAX_PROVIDER_ATTEMPTS:
+                break
             should_abort = False
             async with guard.acquire(
                 estimated_prompt_tokens=estimated_prompt_tokens
@@ -679,10 +684,17 @@ async def chat_completions(req: Request, body: ChatRequest):
                 abort_processing = True
                 break
 
-            if attempt < MAX_PROVIDER_ATTEMPTS:
+            if (
+                attempt < MAX_PROVIDER_ATTEMPTS
+                and attempt_count < MAX_PROVIDER_ATTEMPTS
+            ):
                 await asyncio.sleep(min(0.25 * attempt, 2.0))  # simple backoff
 
-        if success_record is not None or abort_processing:
+        if (
+            success_record is not None
+            or abort_processing
+            or attempt_count >= MAX_PROVIDER_ATTEMPTS
+        ):
             break
 
     if success_response is not None and success_record is not None:
@@ -938,7 +950,8 @@ async def _stream_chat_response(
             if isinstance(completion_value, int) and completion_value > usage_completion_tokens:
                 usage_completion_tokens = completion_value
             if (
-                guard_lease is not None
+                guard is not None
+                and guard_lease is not None
                 and not usage_recorded
                 and (isinstance(prompt_value, int) or isinstance(completion_value, int))
             ):
@@ -977,12 +990,60 @@ async def _stream_chat_response(
                 record["retry_after"] = retry_after
             await _log_metrics(record)
 
+        async def _handle_http_status_error(exc: httpx.HTTPStatusError) -> None:
+            planner.record_failure(provider_name)
+            status, message = _http_status_error_details(exc)
+            status_code = status or BAD_GATEWAY_STATUS
+            retry_after = _retry_after_seconds(exc.response)
+            error_type = _error_type_from_status(status_code)
+            if status_code == 429 or (400 <= status_code < 500):
+                if retry_after is None and status_code == 429:
+                    retry_after = DEFAULT_RETRY_AFTER_SECONDS
+                await queue.put(
+                    (
+                        "error",
+                        {
+                            "status": status_code,
+                            "message": message,
+                            "type": error_type,
+                            "retry_after": retry_after,
+                        },
+                    )
+                )
+                return
+            if retry_after is None and status_code >= 500:
+                retry_after = DEFAULT_RETRY_AFTER_SECONDS
+            await queue.put(
+                (
+                    "fallback",
+                    {
+                        "status": status_code,
+                        "message": message,
+                        "type": error_type,
+                        "retry_after": retry_after,
+                    },
+                )
+            )
+
+        async def _emit_generic_failure(exc: Exception) -> None:
+            planner.record_failure(provider_name)
+            await queue.put(
+                (
+                    "fallback",
+                    {
+                        "status": BAD_GATEWAY_STATUS,
+                        "message": str(exc) or "provider error",
+                        "type": "provider_server_error",
+                        "retry_after": DEFAULT_RETRY_AFTER_SECONDS,
+                    },
+                )
+            )
+
         async def producer() -> None:
             nonlocal guard_lease
             try:
                 async with _guard_context(
-                    guard,
-                    estimated_prompt_tokens=estimated_prompt_tokens,
+                    guard, estimated_prompt_tokens=estimated_prompt_tokens
                 ) as lease:
                     guard_lease = lease
                     try:
@@ -991,8 +1052,31 @@ async def _stream_chat_response(
                             normalized_messages,
                             **provider_kwargs,
                         )
-                        if inspect.isawaitable(stream_iter) and not hasattr(stream_iter, "__anext__"):
+                        if inspect.isawaitable(stream_iter) and not hasattr(
+                            stream_iter, "__anext__"
+                        ):
                             stream_iter = await stream_iter
+                    except UnsupportedContentBlockError as exc:
+                        planner.record_failure(provider_name)
+                        await queue.put(
+                            (
+                                "error",
+                                {
+                                    "status": 400,
+                                    "message": str(exc) or "unsupported content block",
+                                    "type": "provider_error",
+                                    "retry_after": None,
+                                },
+                            )
+                        )
+                        return
+                    except httpx.HTTPStatusError as exc:
+                        await _handle_http_status_error(exc)
+                        return
+                    except Exception as exc:
+                        await _emit_generic_failure(exc)
+                        return
+                    try:
                         first_event = await anext(stream_iter, None)
                     except UnsupportedContentBlockError as exc:
                         planner.record_failure(provider_name)
@@ -1009,53 +1093,10 @@ async def _stream_chat_response(
                         )
                         return
                     except httpx.HTTPStatusError as exc:
-                        planner.record_failure(provider_name)
-                        status, message = _http_status_error_details(exc)
-                        status_code = status or BAD_GATEWAY_STATUS
-                        retry_after = _retry_after_seconds(exc.response)
-                        error_type = _error_type_from_status(status_code)
-                        if status_code == 429 or (400 <= status_code < 500):
-                            if retry_after is None and status_code == 429:
-                                retry_after = DEFAULT_RETRY_AFTER_SECONDS
-                            await queue.put(
-                                (
-                                    "error",
-                                    {
-                                        "status": status_code,
-                                        "message": message,
-                                        "type": error_type,
-                                        "retry_after": retry_after,
-                                    },
-                                )
-                            )
-                            return
-                        if retry_after is None and status_code >= 500:
-                            retry_after = DEFAULT_RETRY_AFTER_SECONDS
-                        await queue.put(
-                            (
-                                "fallback",
-                                {
-                                    "status": status_code,
-                                    "message": message,
-                                    "type": error_type,
-                                    "retry_after": retry_after,
-                                },
-                            )
-                        )
+                        await _handle_http_status_error(exc)
                         return
                     except Exception as exc:
-                        planner.record_failure(provider_name)
-                        await queue.put(
-                            (
-                                "fallback",
-                                {
-                                    "status": BAD_GATEWAY_STATUS,
-                                    "message": str(exc) or "provider error",
-                                    "type": "provider_server_error",
-                                    "retry_after": DEFAULT_RETRY_AFTER_SECONDS,
-                                },
-                            )
-                        )
+                        await _emit_generic_failure(exc)
                         return
                     if first_event is not None:
                         normalized_first = _normalize_event(first_event)
@@ -1090,19 +1131,10 @@ async def _stream_chat_response(
                         },
                     )
                 )
+            except httpx.HTTPStatusError as exc:
+                await _handle_http_status_error(exc)
             except Exception as exc:
-                planner.record_failure(provider_name)
-                await queue.put(
-                    (
-                        "fallback",
-                        {
-                            "status": BAD_GATEWAY_STATUS,
-                            "message": str(exc) or "provider error",
-                            "type": "provider_server_error",
-                            "retry_after": DEFAULT_RETRY_AFTER_SECONDS,
-                        },
-                    )
-                )
+                await _emit_generic_failure(exc)
             finally:
                 guard_lease = None
 

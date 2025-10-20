@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import os
 import sys
 import time
 from pathlib import Path
 from threading import Event
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
