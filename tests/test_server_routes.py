@@ -2016,6 +2016,31 @@ concurrency = 1
     assert records[-1]["model"] == "req-model"
 
 
+def test_dummy_config_missing_provider_warns(route_test_config: Path) -> None:
+    ensure_project_root_on_path()
+    providers_file = route_test_config / "providers.dummy.toml"
+    providers_file.write_text(
+        """
+[dummy]
+type = "dummy"
+model = "dummy"
+base_url = ""
+rpm = 60
+concurrency = 1
+""".strip()
+    )
+
+    from src.orch.router import RoutePlanner, load_config
+
+    with pytest.warns(UserWarning, match="dummy_alt"):
+        loaded = load_config(str(route_test_config), use_dummy=True)
+
+    planner = RoutePlanner(loaded.router, loaded.providers)
+    selection = planner.plan("PLAN")
+    assert selection.primary == "dummy"
+    assert "dummy_alt" not in loaded.providers
+
+
 def test_chat_metrics_records_status_bad_gateway_on_total_failure(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
