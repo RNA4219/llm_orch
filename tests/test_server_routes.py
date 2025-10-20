@@ -295,7 +295,7 @@ def test_chat_uses_guard_estimates_and_records_usage(
             self.record_success_calls: list[str] = []
             self.record_failure_calls: list[str] = []
 
-        def plan(self, task: str):
+        def plan(self, task: str, *, sticky_key: str | None = None):
             self.plan_calls.append(task)
 
             class _Route:
@@ -414,7 +414,7 @@ def test_chat_records_planner_failure_on_guarded_errors(
             self.record_success_calls: list[str] = []
             self.record_failure_calls: list[str] = []
 
-        def plan(self, task: str):
+        def plan(self, task: str, *, sticky_key: str | None = None):
 
             class _Route:
                 primary = "dummy"
@@ -553,7 +553,7 @@ def test_chat_failure_response_includes_orch_headers_after_fallback(
     monkeypatch.setattr(server_module, "MAX_PROVIDER_ATTEMPTS", 1)
 
     route = SimpleNamespace(primary="primary", fallback=["fallback"])
-    monkeypatch.setattr(server_module.planner, "plan", lambda *_: route)
+    monkeypatch.setattr(server_module.planner, "plan", lambda _task, *, sticky_key=None: route)
 
     failure = AsyncMock(side_effect=RuntimeError("boom"))
     primary_provider = SimpleNamespace(model="primary-model", chat=failure)
@@ -1802,11 +1802,13 @@ def test_chat_missing_header_routes_to_task_header_default(
     from src.orch.router import RouteDef as RouterRouteDef, RoutePlanner as RouterRoutePlanner
 
     recorded_tasks: list[str] = []
-    original_plan: Callable[[RouterRoutePlanner, str], RouterRouteDef] = RouterRoutePlanner.plan
+    original_plan = RouterRoutePlanner.plan
 
-    def recording_plan(self: RouterRoutePlanner, task: str) -> RouterRouteDef:
+    def recording_plan(
+        self: RouterRoutePlanner, task: str, *, sticky_key: str | None = None
+    ) -> RouterRouteDef:
         recorded_tasks.append(task)
-        return original_plan(self, task)
+        return original_plan(self, task, sticky_key=sticky_key)
 
     monkeypatch.setattr(RouterRoutePlanner, "plan", recording_plan)
     response = client.post(
@@ -1843,11 +1845,13 @@ routes:
     from src.orch.router import RouteDef as RouterRouteDef, RoutePlanner as RouterRoutePlanner
 
     recorded_tasks: list[str] = []
-    original_plan: Callable[[RouterRoutePlanner, str], RouterRouteDef] = RouterRoutePlanner.plan
+    original_plan = RouterRoutePlanner.plan
 
-    def recording_plan(self: RouterRoutePlanner, task: str) -> RouterRouteDef:
+    def recording_plan(
+        self: RouterRoutePlanner, task: str, *, sticky_key: str | None = None
+    ) -> RouterRouteDef:
         recorded_tasks.append(task)
-        return original_plan(self, task)
+        return original_plan(self, task, sticky_key=sticky_key)
 
     monkeypatch.setattr(RouterRoutePlanner, "plan", recording_plan)
 
