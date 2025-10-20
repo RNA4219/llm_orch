@@ -971,15 +971,15 @@ async def _stream_chat_response(
                 if initial_done:
                     yield b"data: [DONE]\n\n"
                     return
-                if initial_done:
-                    yield b"data: [DONE]\n\n"
-                    return
+                done_sent = False
                 while True:
                     kind, payload = await queue.get()
                     if kind == "data":
                         yield payload
                     elif kind == "done":
-                        yield b"data: [DONE]\n\n"
+                        if not done_sent:
+                            yield b"data: [DONE]\n\n"
+                            done_sent = True
                         break
             finally:
                 if not producer_task.done():

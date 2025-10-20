@@ -532,8 +532,40 @@ def test_openai_chat_stream_normalizes_sse(monkeypatch: pytest.MonkeyPatch) -> N
     assert response.usage_completion_tokens == 7
 
 
+@pytest.mark.parametrize(
+    "lines",
+    [
+        pytest.param(
+            [
+                "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2}}",
+                "data: [DONE]",
+            ],
+            id="no-separator",
+        ),
+        pytest.param(
+            [
+                "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2}}",
+                "",
+                "",
+                "data: [DONE]",
+            ],
+            id="blank-lines-before-done",
+        ),
+        pytest.param(
+            [
+                "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2}}",
+                "",
+                "data: [DONE]",
+                "",
+                "",
+            ],
+            id="trailing-empties-after-done",
+        ),
+    ],
+)
 def test_openai_chat_stream_handles_done_without_separator(
     monkeypatch: pytest.MonkeyPatch,
+    lines: list[str],
 ) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "secret")
     provider = make_provider("https://api.openai.com")
@@ -560,11 +592,6 @@ def test_openai_chat_stream_handles_done_without_separator(
 
         async def __aexit__(self, exc_type, exc: BaseException | None, tb: Any) -> None:
             return None
-
-    lines = [
-        "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2}}",
-        "data: [DONE]",
-    ]
 
     def fake_stream(self: httpx.AsyncClient, method: str, url: str, **kwargs: Any) -> FakeStreamContext:
         assert method == "POST"
