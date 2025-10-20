@@ -964,22 +964,34 @@ async def _stream_chat_response(
                 initial_done = True
                 break
 
+        done_frame = b"data: [DONE]\n\n"
+
         async def event_source() -> Any:
+            done_sent = False
+
+            def _next_done() -> bytes | None:
+                nonlocal done_sent
+                if done_sent:
+                    return None
+                done_sent = True
+                return done_frame
+
             try:
                 for chunk in initial_chunks:
                     yield chunk
                 if initial_done:
-                    yield b"data: [DONE]\n\n"
-                    return
-                if initial_done:
-                    yield b"data: [DONE]\n\n"
+                    done_payload = _next_done()
+                    if done_payload is not None:
+                        yield done_payload
                     return
                 while True:
                     kind, payload = await queue.get()
                     if kind == "data":
                         yield payload
                     elif kind == "done":
-                        yield b"data: [DONE]\n\n"
+                        done_payload = _next_done()
+                        if done_payload is not None:
+                            yield done_payload
                         break
             finally:
                 if not producer_task.done():

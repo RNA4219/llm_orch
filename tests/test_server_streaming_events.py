@@ -146,3 +146,13 @@ def test_streaming_structured_events_are_normalized(monkeypatch: MonkeyPatch) ->
         else:
             assert "event_type" not in parsed
             assert "raw" not in parsed
+
+
+def test_streaming_done_emitted_once_for_empty_stream(monkeypatch: MonkeyPatch) -> None:
+    async def _stream(*_args: Any, **_kwargs: Any) -> AsyncIterator[ProviderStreamChunk]:
+        if False:  # pragma: no cover - satisfy async generator semantics
+            yield ProviderStreamChunk()
+
+    events = _collect_sse_events(monkeypatch, _stream)
+
+    assert events == [(None, "[DONE]")]
