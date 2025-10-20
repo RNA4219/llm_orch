@@ -1,5 +1,7 @@
 import pathlib
 
+import yaml
+
 
 def test_chat_curl_uses_failfast_flag() -> None:
     script_path = pathlib.Path('tools/ci/smoke.sh')
@@ -62,3 +64,23 @@ def test_curl_commands_support_api_key_header() -> None:
         assert '"${AUTH_HEADER_ARGS[@]}"' in joined, (
             f'curl command #{idx} must include the conditional API header arguments'
         )
+
+
+def test_ci_workflow_includes_lint_jobs() -> None:
+    workflow_path = pathlib.Path('.github/workflows/ci-py.yml')
+    workflow_data = yaml.safe_load(workflow_path.read_text())
+
+    jobs = workflow_data.get('jobs', {})
+
+    assert 'ruff' in jobs, 'ci-py workflow must define a ruff lint job'
+    assert 'mypy' in jobs, 'ci-py workflow must define a mypy type-check job'
+
+    ruff_steps = jobs['ruff'].get('steps', [])
+    assert any('ruff check' in step.get('run', '') for step in ruff_steps), (
+        'ruff job must execute "ruff check"'
+    )
+
+    mypy_steps = jobs['mypy'].get('steps', [])
+    assert any('mypy' in step.get('run', '') for step in mypy_steps), (
+        'mypy job must execute mypy'
+    )
