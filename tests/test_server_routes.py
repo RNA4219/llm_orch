@@ -10,17 +10,13 @@ from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
 from pathlib import Path
 from types import MethodType, SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
-if TYPE_CHECKING:
-    from src.orch.router import RouteDef, RoutePlanner
-
 
 def load_app(dummy_env: str | None = None) -> FastAPI:
     module_name = "src.orch.server"
@@ -1248,6 +1244,24 @@ def test_metrics_endpoint_returns_prometheus_text(
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/plain")
     assert "# HELP" in response.text
+
+
+def test_models_endpoint_lists_configured_providers(route_test_config: Path) -> None:
+    client = TestClient(load_app("1"))
+    response = client.get("/v1/models")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["object"] == "list"
+    data = payload.get("data")
+    assert isinstance(data, list)
+    for item in data:
+        assert isinstance(item, dict)
+        assert item["object"] == "model"
+        assert isinstance(item["owned_by"], str)
+        assert item["owned_by"]
+    ids = {item["id"] for item in data}
+    assert {"dummy", "dummy_alt"}.issubset(ids)
 
 
 def test_chat_requires_api_key_when_configured(
