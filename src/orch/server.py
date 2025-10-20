@@ -129,6 +129,23 @@ def _estimate_prompt_tokens(messages: list[dict[str, Any]], fallback: int) -> in
     return total
 
 
+def _planner_supports_sticky(plan: Any) -> bool:
+    try:
+        signature = inspect.signature(plan)
+    except (TypeError, ValueError):
+        return False
+    parameters = signature.parameters
+    if any(param.kind is inspect.Parameter.VAR_KEYWORD for param in parameters.values()):
+        return True
+    sticky_param = parameters.get("sticky_key")
+    if sticky_param is None:
+        return False
+    return sticky_param.kind in (
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        inspect.Parameter.KEYWORD_ONLY,
+    )
+
+
 cfg = load_config(CONFIG_DIR, use_dummy=USE_DUMMY)
 providers = ProviderRegistry(cfg.providers)
 guards = ProviderGuards(cfg.providers)
@@ -444,8 +461,17 @@ async def chat_completions(req: Request, body: ChatRequest):
 
     estimated_prompt_tokens = _estimate_prompt_tokens(normalized_messages, max_tokens)
 
+    sticky_key_header = req.headers.get("x-orch-sticky-key")
+    if not sticky_key_header:
+        sticky_key_header = req.headers.get("X-Orch-Session")
+    sticky_key = sticky_key_header.strip() if sticky_key_header else None
+
     try:
-        route = planner.plan(task)
+        plan_fn = planner.plan
+        if _planner_supports_sticky(plan_fn):
+            route = plan_fn(task, sticky_key=sticky_key)
+        else:
+            route = plan_fn(task)
     except ValueError as exc:
         detail = str(exc) or "routing unavailable"
         await _log_metrics({

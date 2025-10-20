@@ -41,7 +41,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: test-logs
+          name: "test-logs-${{ github.job }}"
           path: workflow-cookbook/logs/*
           overwrite: true
 
@@ -74,7 +74,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: test-logs
+          name: "test-logs-${{ github.job }}"
           path: workflow-cookbook/logs/*
           overwrite: true
 
@@ -164,7 +164,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-logs
+          name: "test-logs-${{ github.job }}"
           path: workflow-cookbook/logs/*
           overwrite: true
 
@@ -204,7 +204,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: test-logs
+          name: "test-logs-${{ github.job }}"
           path: workflow-cookbook/logs/*
           overwrite: true
 
@@ -233,7 +233,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: test-logs
+          name: "test-logs-${{ github.job }}"
           path: workflow-cookbook/logs/*
           overwrite: true
 
@@ -242,7 +242,10 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v4
-        with: { name: test-logs, path: . }
+        with:
+          pattern: test-logs-*
+          path: .
+          merge-multiple: true
       - name: Summarize & STRICT gate (optional)
         run: |
           set -Eeuo pipefail

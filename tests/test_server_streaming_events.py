@@ -69,7 +69,7 @@ def _collect_sse_events(
         return None
 
     planner_stub = SimpleNamespace(
-        plan=lambda _task: route,
+        plan=lambda _task, *, sticky_key=None: route,
         record_success=_noop,
         record_failure=_noop,
     )
