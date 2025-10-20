@@ -429,6 +429,53 @@ def test_chat_records_planner_failure_on_guarded_errors(
         assert fake_planner.record_failure_calls == ["dummy"]
 
 
+def test_chat_handles_missing_guard(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+    records = capture_metric_records(server_module, monkeypatch)
+
+    from src.orch.types import ProviderChatResponse
+
+    class GuardRegistry:
+        def get(self, name: str) -> object:
+            raise KeyError(name)
+
+    provider_response = ProviderChatResponse(
+        status_code=200,
+        model="dummy",
+        content="ok",
+        usage_prompt_tokens=7,
+        usage_completion_tokens=3,
+    )
+    chat_mock = AsyncMock(return_value=provider_response)
+
+    class MockProvider:
+        model = "dummy"
+
+        def __init__(self) -> None:
+            self.chat = chat_mock
+
+    monkeypatch.setattr(server_module, "guards", GuardRegistry(), raising=False)
+    monkeypatch.setitem(server_module.providers.providers, "dummy", MockProvider())
+
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "dummy",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+
+    assert response.status_code == 200
+    chat_mock.assert_awaited_once()
+    assert records
+    assert records[-1]["ok"] is True
+    assert records[-1]["status"] == 200
+
+
 @pytest.mark.parametrize(
     "exception_factory, expected_status",
     [
@@ -1651,6 +1698,19 @@ rpm = 60
 concurrency = 1
 """.strip()
     )
+    router_file = route_test_config / "router.yaml"
+    router_file.write_text(
+        """
+defaults:
+  temperature: 0.2
+  max_tokens: 64
+  task_header: "x-orch-task-kind"
+  task_header_value: "PLAN"
+routes:
+  PLAN:
+    primary: dummy
+""".strip()
+    )
 
     app = load_app("1")
     server_module = sys.modules["src.orch.server"]
@@ -1704,6 +1764,19 @@ rpm = 60
 concurrency = 1
 """.strip()
     )
+    router_file = route_test_config / "router.yaml"
+    router_file.write_text(
+        """
+defaults:
+  temperature: 0.2
+  max_tokens: 64
+  task_header: "x-orch-task-kind"
+  task_header_value: "PLAN"
+routes:
+  PLAN:
+    primary: dummy
+""".strip()
+    )
 
     app = load_app("1")
     server_module = sys.modules["src.orch.server"]
@@ -1738,6 +1811,19 @@ concurrency = 1
 def test_chat_metrics_records_status_bad_gateway_on_total_failure(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    router_file = route_test_config / "router.yaml"
+    router_file.write_text(
+        """
+defaults:
+  temperature: 0.2
+  max_tokens: 64
+  task_header: "x-orch-task-kind"
+  task_header_value: "PLAN"
+routes:
+  PLAN:
+    primary: dummy
+""".strip()
+    )
     app = load_app("1")
     server_module = sys.modules["src.orch.server"]
     records = capture_metric_records(server_module, monkeypatch)
@@ -1780,6 +1866,19 @@ model = ""
 base_url = ""
 rpm = 60
 concurrency = 1
+        """.strip()
+    )
+    router_file = route_test_config / "router.yaml"
+    router_file.write_text(
+        """
+defaults:
+  temperature: 0.2
+  max_tokens: 64
+  task_header: "x-orch-task-kind"
+  task_header_value: "PLAN"
+routes:
+  PLAN:
+    primary: dummy
 """.strip()
     )
 
@@ -2061,6 +2160,19 @@ def test_chat_metrics_routing_error_usage_zero(
 def test_chat_metrics_provider_error_includes_req_id(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    router_file = route_test_config / "router.yaml"
+    router_file.write_text(
+        """
+defaults:
+  temperature: 0.2
+  max_tokens: 64
+  task_header: "x-orch-task-kind"
+  task_header_value: "PLAN"
+routes:
+  PLAN:
+    primary: dummy
+""".strip()
+    )
     app = load_app("1")
     server_module = sys.modules["src.orch.server"]
     records = capture_metric_records(server_module, monkeypatch)
@@ -2092,6 +2204,19 @@ def test_chat_metrics_provider_error_includes_req_id(
 def test_chat_metrics_provider_error_usage_zero(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    router_file = route_test_config / "router.yaml"
+    router_file.write_text(
+        """
+defaults:
+  temperature: 0.2
+  max_tokens: 64
+  task_header: "x-orch-task-kind"
+  task_header_value: "PLAN"
+routes:
+  PLAN:
+    primary: dummy
+""".strip()
+    )
     app = load_app("1")
     server_module = sys.modules["src.orch.server"]
     records = capture_metric_records(server_module, monkeypatch)
@@ -2127,6 +2252,19 @@ def test_chat_metrics_provider_error_usage_zero(
 def test_chat_metrics_provider_error_records_status_502(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    router_file = route_test_config / "router.yaml"
+    router_file.write_text(
+        """
+defaults:
+  temperature: 0.2
+  max_tokens: 64
+  task_header: "x-orch-task-kind"
+  task_header_value: "PLAN"
+routes:
+  PLAN:
+    primary: dummy
+""".strip()
+    )
     app = load_app("1")
     server_module = sys.modules["src.orch.server"]
     records = capture_metric_records(server_module, monkeypatch)
