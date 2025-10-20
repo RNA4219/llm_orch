@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import os
+from types import SimpleNamespace
 import sys
 import time
 from pathlib import Path
@@ -283,3 +285,99 @@ def test_config_refresh_loop_reloads_when_planner_requests(
     assert server_module.planner is updated_planner
     assert updated_planner.calls >= 1
     assert server_module.providers.get("dummy") == ("dummy", "after")
+
+
+def test_http_request_uses_reloaded_provider_and_limits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def write_bundle(provider: str, max_tokens: int, concurrency: int, timestamp: float) -> None:
+        providers_body = "\n".join([f"[{provider}]", 'type = "dummy"', 'model = "dummy"', f'base_url = "http://{provider}"', "rpm = 60", f"concurrency = {concurrency}", ""])
+        router_body = "\n".join(["defaults:", "  temperature: 0.2", f"  max_tokens: {max_tokens}", '  task_header: "x-orch-task-kind"', '  task_header_value: "PLAN"', "routes:", "  PLAN:", f"    primary: {provider}", ""])
+        for name, body in (
+            ("providers.dummy.toml", providers_body),
+            ("router.yaml", router_body),
+        ):
+            path = tmp_path / name
+            temp = path.with_suffix(path.suffix + ".tmp")
+            temp.write_text(body)
+            os.replace(temp, path)
+            os.utime(path, (timestamp, timestamp))
+
+    write_bundle("alpha", 64, 1, 1_000_000.0)
+    for key, value in (("ORCH_CONFIG_DIR", str(tmp_path)), ("ORCH_USE_DUMMY", "1"), ("ORCH_INBOUND_API_KEYS", "test-key")):
+        monkeypatch.setenv(key, value)
+
+    load_app("1")
+    server_module = sys.modules["src.orch.server"]
+    monkeypatch.setattr(server_module.planner, "refresh", lambda *_, **__: False)
+
+    from src.orch.providers import DummyProvider
+    from src.orch.types import ProviderChatResponse
+    call_state = SimpleNamespace(value=None)
+    async def fake_chat(self: DummyProvider, model: str, messages: list[dict[str, object]], **kwargs: object) -> ProviderChatResponse:  # type: ignore[override]
+        call_state.value = (self.defn.name, int(kwargs.get("max_tokens", 0)))
+        return ProviderChatResponse(status_code=200, model="dummy", content=self.defn.name, finish_reason="stop")
+
+    monkeypatch.setattr(DummyProvider, "chat", fake_chat, raising=False)
+
+    with TestClient(server_module.app) as client:
+        resp = client.post(
+            "/v1/chat/completions",
+            headers={"x-api-key": "test-key"},
+            json={"model": "dummy-model", "messages": [{"role": "user", "content": "hello"}]},
+        )
+        assert resp.status_code == 200
+
+        write_bundle("beta", 128, 2, 1_000_010.0)
+        server_module.reload_configuration()
+
+        resp = client.post(
+            "/v1/chat/completions",
+            headers={"x-api-key": "test-key"},
+            json={"model": "dummy-model", "messages": [{"role": "user", "content": "after"}]},
+        )
+        assert resp.status_code == 200
+        assert (resp.headers["x-orch-provider"], call_state.value) == ("beta", ("beta", 128))
+
+
+def test_config_refresh_loop_discards_old_planner_immediately(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sys.modules.pop("src.orch.server", None)
+    importlib.invalidate_caches()
+    server_module = importlib.import_module("src.orch.server")
+    event = asyncio.Event()
+    initial_state = SimpleNamespace(count=0)
+    updated_state = SimpleNamespace(count=0)
+
+    def initial_refresh() -> bool:
+        initial_state.count += 1
+        assert initial_state.count == 1, "stale planner refresh executed"
+        return True
+
+    def updated_refresh() -> bool:
+        updated_state.count += 1
+        event.set()
+        return False
+
+    server_module.planner = SimpleNamespace(refresh=initial_refresh)
+    updated_planner = SimpleNamespace(refresh=updated_refresh)
+
+    def fake_reload() -> None:
+        server_module.planner = updated_planner
+
+    monkeypatch.setattr(server_module, "reload_configuration", fake_reload)
+
+    async def runner() -> None:
+        task = asyncio.create_task(server_module._config_refresh_loop())
+        try:
+            await asyncio.wait_for(event.wait(), timeout=1.0)
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    asyncio.run(runner())
+
+    assert initial_state.count == 1
+    assert updated_state.count >= 1 and server_module.planner is updated_planner
