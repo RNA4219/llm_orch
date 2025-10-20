@@ -6,6 +6,8 @@ import os
 import sys
 from collections.abc import Callable
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
@@ -520,6 +522,102 @@ def test_chat_streams_provider_chunk_events(
     body = response.text
     assert "data: {\"choices\":" in body
     assert "data: [DONE]" in body
+
+def _make_http_status_error(status: int, retry_after: str | None = None) -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "https://dummy.test")
+    headers: dict[str, str] = {} if retry_after is None else {"Retry-After": retry_after}
+    response = httpx.Response(status, headers=headers, request=request)
+    return httpx.HTTPStatusError("error", request=request, response=response)
+
+
+@pytest.mark.parametrize(
+    "retry_after_seconds, use_http_date",
+    [(37, False), (90, True)],
+)
+def test_chat_stream_rate_limit_retry_after(
+    route_test_config: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    retry_after_seconds: int,
+    use_http_date: bool,
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+    header_value = str(retry_after_seconds)
+    if use_http_date:
+        freeze_now = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+        header_value = format_datetime(freeze_now + timedelta(seconds=retry_after_seconds))
+        monkeypatch.setattr(server_module, "datetime", SimpleNamespace(now=lambda *_: freeze_now))
+
+    class MockProvider:
+        model = "dummy"
+        async def chat_stream(self, *args: object, **kwargs: object):
+            raise _make_http_status_error(429, header_value)
+    monkeypatch.setitem(server_module.providers.providers, "dummy", MockProvider())
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "dummy", "messages": [{"role": "user", "content": "hi"}], "stream": True},
+    )
+    assert response.status_code == 429
+    assert_orch_headers(response, provider="dummy", fallback_attempts="0")
+    payload = response.json()
+    assert payload["error"]["retry_after"] == retry_after_seconds
+    assert payload["error"]["type"] == "rate_limit"
+
+
+def test_chat_stream_fallback_chain_returns_final_failure(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+    guard = server_module.guards.get("dummy")
+    monkeypatch.setattr(server_module.guards, "get", lambda *_args, **_kwargs: guard)
+    monkeypatch.setattr(server_module, "MAX_PROVIDER_ATTEMPTS", 1)
+    route = SimpleNamespace(primary="primary", fallback=["secondary"])
+    monkeypatch.setattr(server_module.planner, "plan", lambda *_: route)
+    failure_calls: list[str] = []
+    monkeypatch.setattr(
+        server_module.planner,
+        "record_failure",
+        lambda provider: failure_calls.append(provider),
+    )
+
+    def _stream_error(exc: Exception):
+        async def _gen() -> Any:
+            raise exc
+            if False:
+                yield None
+        return _gen()
+    providers_map = {
+        name: type(
+            f"{name.title()}Provider",
+            (),
+            {
+                "model": f"{name}-model",
+                "chat_stream": lambda self, *args, _exc=exc, **kwargs: _stream_error(_exc),
+            },
+        )()
+        for name, exc in (
+            ("primary", _make_http_status_error(503)),
+            ("secondary", RuntimeError("fallback failed")),
+        )
+    }
+    for name, provider in providers_map.items():
+        monkeypatch.setitem(server_module.providers.providers, name, provider)
+
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "req-model", "messages": [{"role": "user", "content": "hi"}], "stream": True},
+    )
+    assert response.status_code == 502
+    assert_orch_headers(response, provider="secondary", fallback_attempts="1")
+    payload = response.json()
+    assert payload["error"]["message"] == "fallback failed"
+    assert payload["error"]["type"] == "provider_server_error"
+    assert payload["error"]["retry_after"] == server_module.DEFAULT_RETRY_AFTER_SECONDS
+    assert failure_calls == ["primary", "secondary"]
+
 
 def test_chat_accepts_tool_role_messages(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
