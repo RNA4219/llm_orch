@@ -980,16 +980,19 @@ async def _stream_chat_response(
         async def producer() -> None:
             nonlocal guard_lease
             try:
-                async with guard as lease:
+                async with _guard_context(
+                    guard,
+                    estimated_prompt_tokens=estimated_prompt_tokens,
+                ) as lease:
                     guard_lease = lease
-                    stream_iter = provider.chat_stream(
-                        model,
-                        normalized_messages,
-                        **provider_kwargs,
-                    )
-                    if inspect.isawaitable(stream_iter) and not hasattr(stream_iter, "__anext__"):
-                        stream_iter = await stream_iter
                     try:
+                        stream_iter = provider.chat_stream(
+                            model,
+                            normalized_messages,
+                            **provider_kwargs,
+                        )
+                        if inspect.isawaitable(stream_iter) and not hasattr(stream_iter, "__anext__"):
+                            stream_iter = await stream_iter
                         first_event = await anext(stream_iter, None)
                     except UnsupportedContentBlockError as exc:
                         planner.record_failure(provider_name)
