@@ -2,7 +2,23 @@
 
 ## 1. 外部API
 ### 1.1 GET /healthz
-- 200 OK: `{ "status":"ok", "providers": ["frontier_primary", "..."] }`
+- 200 OK:
+  ```json
+  {
+    "status": "ok",
+    "providers": ["frontier_primary", "..."],
+    "planner": {
+      "last_reload_at": "2024-05-10T12:34:56Z",
+      "watch": [
+        {"name": "providers", "path": "providers.toml", "last_modified_at": "2024-05-10T12:34:00Z"},
+        {"name": "router", "path": "router.yaml", "last_modified_at": "2024-05-10T12:33:00Z"}
+      ]
+    }
+  }
+  ```
+  - `planner.last_reload_at`: 最後にルート設定を読み込んだUTC時刻（ISO 8601）。
+  - `planner.watch[].path`: 監視対象ファイルの相対パス（絶対パスは公開しない）。
+  - `planner.watch[].last_modified_at`: FastAPI起点で観測した最終更新UTC時刻。ファイルが見つからない場合は `null`。
 
 ### 1.2 POST /v1/chat/completions
 - 互換: OpenAI Chat Completions（`stream:true` を推奨）。

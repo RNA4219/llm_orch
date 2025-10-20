@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
 import os
 import sys
 from collections.abc import Callable
@@ -949,6 +950,57 @@ def _make_http_status_error(status: int, retry_after: str | None = None) -> http
     headers: dict[str, str] = {} if retry_after is None else {"Retry-After": retry_after}
     response = httpx.Response(status, headers=headers, request=request)
     return httpx.HTTPStatusError("error", request=request, response=response)
+
+
+@pytest.mark.parametrize(
+    ("scenario", "expected_status", "expected_code"),
+    [
+        ("auth", 401, "invalid_api_key"),
+        ("rate_limit", 429, "rate_limit"),
+        ("server_error", 502, "provider_server_error"),
+    ],
+)
+def test_chat_error_code_is_enumerated(
+    route_test_config: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    scenario: str,
+    expected_status: int,
+    expected_code: str,
+) -> None:
+    _write_single_provider_router(route_test_config)
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+    client = TestClient(app)
+
+    if scenario == "auth":
+        monkeypatch.setattr(server_module, "INBOUND_API_KEYS", frozenset({"secret"}))
+    else:
+        status_map = {"rate_limit": 429, "server_error": 503}
+
+        class ErroringProvider:
+            model = "dummy"
+
+            async def chat(self, *args: object, **kwargs: object) -> object:
+                raise _make_http_status_error(status_map[scenario])
+
+        monkeypatch.setitem(
+            server_module.providers.providers, "dummy", ErroringProvider()
+        )
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "dummy", "messages": [{"role": "user", "content": "hi"}]},
+    )
+
+    assert response.status_code == expected_status
+    payload = response.json()
+    error_body = payload.get("error")
+    assert isinstance(error_body, dict)
+    error_code = error_body.get("code")
+    assert isinstance(error_code, str)
+    enum_values = {member.value for member in server_module.ErrorCode}
+    assert error_code in enum_values
+    assert error_code == expected_code
 
 
 @pytest.mark.parametrize(
@@ -2180,6 +2232,63 @@ concurrency = 1
     fallback_record = records[-1]
     assert fallback_record["ok"] is False
     assert fallback_record["model"] == "prov-model"
+
+
+def test_chat_logs_error_context(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    providers_file = route_test_config / "providers.dummy.toml"
+    providers_file.write_text(
+        """
+[dummy]
+type = "dummy"
+model = ""
+base_url = ""
+rpm = 60
+concurrency = 1
+""".strip()
+    )
+    _write_single_provider_router(route_test_config)
+
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+
+    class FailingProvider:
+        model = ""
+
+        def __init__(self) -> None:
+            self.chat = AsyncMock(side_effect=RuntimeError("boom"))
+
+    monkeypatch.setattr(server_module, "MAX_PROVIDER_ATTEMPTS", 1)
+    monkeypatch.setitem(
+        server_module.providers.providers,
+        "dummy",
+        FailingProvider(),
+    )
+
+    client = TestClient(app)
+    caplog.clear()
+    with caplog.at_level(logging.ERROR):
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "",
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+        )
+
+    assert response.status_code == 502
+    req_id = response.headers["x-orch-request-id"]
+    provider = response.headers["x-orch-provider"]
+    attempts = int(response.headers["x-orch-fallback-attempts"]) + 1
+
+    error_records = [record for record in caplog.records if record.levelno >= logging.ERROR]
+    assert error_records
+    last_record = error_records[-1]
+    message = last_record.getMessage()
+    assert f"req_id={req_id}" in message
+    assert f"provider={provider}" in message
+    assert f"attempts={attempts}" in message
 
 
 def test_chat_missing_header_routes_to_task_header_default(
