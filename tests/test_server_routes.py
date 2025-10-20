@@ -1319,6 +1319,21 @@ def test_chat_requires_api_key_when_configured(
     )
     assert response.status_code == 401
 
+
+def test_logs_warning_when_api_key_not_configured(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv("ORCH_INBOUND_API_KEYS", "")
+    monkeypatch.setenv("ORCH_CORS_ALLOW_ORIGINS", "")
+    with caplog.at_level(logging.WARNING):
+        app = load_app("1")
+        client = TestClient(app)
+        response = client.get("/metrics")
+
+    assert response.status_code == 200
+    warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
+    assert any("APIキー保護が無効" in message for message in warnings)
+
 def test_chat_accepts_tool_choice_strings(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
