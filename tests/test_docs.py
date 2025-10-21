@@ -51,39 +51,49 @@ def expected_readme_examples() -> Dict[str, Dict[str, Any]]:
         "ChatRequestStickyCurl": {
             "model": "gpt-4o-mini",
             "messages": [
-                {"role": "system", "content": "You are a routing assistant."},
+                {
+                    "role": "system",
+                    "content": "You triage loyalty checkout recommendations.",
+                },
                 {
                     "role": "user",
-                    "content": "最新レコメンドの候補を3つ提案して。",
+                    "content": "カート checkout-42 に向けたレコメンドを3件まとめて。",
                 },
             ],
-            "temperature": 0.3,
+            "temperature": 0.2,
+            "max_tokens": 512,
             "stream": False,
         },
         "ChatRequestStreamPython": {
             "model": "gpt-4o-mini",
             "messages": [
-                {"role": "system", "content": "You are a helpful assistant."},
+                {
+                    "role": "system",
+                    "content": "You summarize patch notes in friendly Japanese.",
+                },
                 {
                     "role": "user",
-                    "content": "SSEで自己紹介を短く返して。",
+                    "content": "以下のdiffを要約して: add webhook retry metric",
                 },
             ],
-            "temperature": 0.7,
-            "max_tokens": 256,
+            "temperature": 0.6,
+            "max_tokens": 192,
             "stream": True,
         },
         "ChatRequestStreamJavaScript": {
             "model": "gpt-4o-mini",
             "messages": [
-                {"role": "system", "content": "You respond with JSON fragments."},
+                {
+                    "role": "system",
+                    "content": "You emit status updates as JSON fragments.",
+                },
                 {
                     "role": "user",
-                    "content": "進捗報告テンプレートをストリームで送って。",
+                    "content": "スプリント3の進捗レポート雛形をストリームで。",
                 },
             ],
-            "temperature": 0.5,
-            "max_tokens": 200,
+            "temperature": 0.4,
+            "max_tokens": 220,
             "stream": True,
         },
     }
