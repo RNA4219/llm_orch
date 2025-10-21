@@ -1,4 +1,3 @@
-import json
 import sys
 from pathlib import Path
 from typing import Any, Callable
@@ -12,9 +11,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.orch.router import RouteDef, RouteTarget
+from src.orch.router import RouteDef, RouteTarget  # noqa: E402
 
-from tests.test_server_routes import capture_metric_records, load_app
+from tests.test_server_routes import capture_metric_records, load_app  # noqa: E402
 
 
 def _http_status_error(status_code: int, *, message: str = "boom") -> httpx.HTTPStatusError:
