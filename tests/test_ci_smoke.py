@@ -1,4 +1,7 @@
 import pathlib
+import re
+
+import yaml
 
 
 def test_chat_curl_uses_failfast_flag() -> None:
@@ -62,3 +65,55 @@ def test_curl_commands_support_api_key_header() -> None:
         assert '"${AUTH_HEADER_ARGS[@]}"' in joined, (
             f'curl command #{idx} must include the conditional API header arguments'
         )
+
+
+def test_ci_workflow_includes_lint_jobs() -> None:
+    workflow_path = pathlib.Path('.github/workflows/ci-py.yml')
+    workflow_data = yaml.safe_load(workflow_path.read_text())
+
+    jobs = workflow_data.get('jobs', {})
+
+    assert 'ruff' in jobs, 'ci-py workflow must define a ruff lint job'
+    assert 'mypy' in jobs, 'ci-py workflow must define a mypy type-check job'
+
+    ruff_steps = jobs['ruff'].get('steps', [])
+    assert any('ruff check' in step.get('run', '') for step in ruff_steps), (
+        'ruff job must execute "ruff check"'
+    )
+
+    mypy_steps = jobs['mypy'].get('steps', [])
+    assert any('mypy' in step.get('run', '') for step in mypy_steps), (
+        'mypy job must execute mypy'
+    )
+
+
+def test_requirements_file_has_unique_packages() -> None:
+    requirements_path = pathlib.Path('requirements.txt')
+    lines = requirements_path.read_text().splitlines()
+
+    seen: dict[str, str] = {}
+    duplicates: list[tuple[str, str, str]] = []
+
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith('#'):
+            continue
+
+        requirement_part = line.split(';', 1)[0].strip()
+        name_candidate = re.split(r'[<>=!~]', requirement_part, 1)[0]
+        package_name = name_candidate.split('[', 1)[0].strip().lower()
+        if not package_name:
+            continue
+
+        if package_name in seen and seen[package_name] != line:
+            duplicates.append((package_name, seen[package_name], line))
+            continue
+
+        seen.setdefault(package_name, line)
+
+    assert not duplicates, (
+        'requirements.txt contains conflicting entries: '
+        + ', '.join(
+            f"{name} -> '{first}' vs '{second}'" for name, first, second in duplicates
+        )
+    )

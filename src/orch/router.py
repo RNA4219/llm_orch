@@ -1,16 +1,18 @@
+import importlib
 import os
 import random
+import sys
 import time
 import warnings
 from dataclasses import dataclass, field
-from typing import Dict, Literal, Sequence
+from typing import Any, Dict, Literal, Sequence, SupportsInt, cast
 
-try:
+if sys.version_info >= (3, 11):  # pragma: no cover - exercised via tests
     import tomllib
-except ModuleNotFoundError:  # pragma: no cover - exercised via tests
-    import tomli as tomllib
+else:  # pragma: no cover - exercised via tests
+    tomllib = cast(Any, importlib.import_module("tomli"))
 
-import yaml
+yaml = cast(Any, importlib.import_module("yaml"))
 from pydantic import BaseModel, ConfigDict, Field, PositiveFloat, PositiveInt, ValidationError, model_validator
 
 @dataclass
@@ -171,7 +173,42 @@ class _RouterModel(BaseModel):
 
 
 def _read_concurrency(name: str, raw_value: object) -> int:
-    concurrency = int(raw_value)
+    if raw_value is None:
+        raise ValueError(
+            "Provider '{name}' defines invalid concurrency <missing>; must be >= 1.".format(
+                name=name,
+            )
+        )
+    if isinstance(raw_value, bool):
+        raise ValueError(
+            "Provider '{name}' defines invalid concurrency boolean; must be integer-compatible.".format(
+                name=name,
+            )
+        )
+
+    concurrency: int
+    if isinstance(raw_value, int):
+        concurrency = raw_value
+    elif isinstance(raw_value, str):
+        try:
+            concurrency = int(raw_value.strip())
+        except ValueError as exc:
+            raise ValueError(
+                "Provider '{name}' defines invalid concurrency {value}; must be integer-compatible.".format(
+                    name=name,
+                    value=raw_value,
+                )
+            ) from exc
+    elif isinstance(raw_value, SupportsInt):
+        concurrency = int(raw_value)
+    else:
+        raise ValueError(
+            "Provider '{name}' defines invalid concurrency {value}; must be integer-compatible.".format(
+                name=name,
+                value=raw_value,
+            )
+        )
+
     if concurrency < 1:
         raise ValueError(
             "Provider '{name}' defines invalid concurrency {value}; must be >= 1.".format(
@@ -227,9 +264,13 @@ def load_config(config_dir: str, use_dummy: bool=False) -> LoadedConfig:
             )
             for target in route_model.targets
         ]
+        strategy = route_model.strategy
+        if strategy is None:  # pragma: no cover - validation ensures this is populated
+            raise ValueError(f"route '{name}' resolved without a strategy")
+
         routes_cfg[name] = RouteDef(
             name=name,
-            strategy=route_model.strategy,
+            strategy=strategy,
             targets=targets,
             sticky_ttl=float(route_model.sticky_ttl) if route_model.sticky_ttl is not None else None,
         )
