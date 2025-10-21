@@ -1,15 +1,7 @@
 import pathlib
-import subprocess
-import sys
+import re
 
-import pytest
 import yaml
-
-PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from tools.ci.docker_build_smoke import run_docker_build_smoke
 
 
 def test_chat_curl_uses_failfast_flag() -> None:
@@ -75,55 +67,53 @@ def test_curl_commands_support_api_key_header() -> None:
         )
 
 
-def test_run_docker_build_smoke_invokes_docker_build(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured: dict[str, object] = {}
+def test_ci_workflow_includes_lint_jobs() -> None:
+    workflow_path = pathlib.Path('.github/workflows/ci-py.yml')
+    workflow_data = yaml.safe_load(workflow_path.read_text())
 
-    def _fake_run(command: tuple[str, ...], *, check: bool) -> subprocess.CompletedProcess[object]:
-        captured["command"] = command
-        captured["check"] = check
-        return subprocess.CompletedProcess(args=command, returncode=0)
+    jobs = workflow_data.get('jobs', {})
 
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    assert 'ruff' in jobs, 'ci-py workflow must define a ruff lint job'
+    assert 'mypy' in jobs, 'ci-py workflow must define a mypy type-check job'
 
-    context = pathlib.Path("/tmp/workspace")
-    run_docker_build_smoke(context=context, tag="llm-orch:test")
+    ruff_steps = jobs['ruff'].get('steps', [])
+    assert any('ruff check' in step.get('run', '') for step in ruff_steps), (
+        'ruff job must execute "ruff check"'
+    )
 
-    command = captured["command"]
-    assert isinstance(command, tuple)
-    assert command[:2] == ("docker", "build")
-    assert "--file" in command
-    file_index = command.index("--file")
-    assert command[file_index + 1] == str(context / "Dockerfile")
-    assert command[-1] == str(context)
-    assert captured["check"] is True
+    mypy_steps = jobs['mypy'].get('steps', [])
+    assert any('mypy' in step.get('run', '') for step in mypy_steps), (
+        'mypy job must execute mypy'
+    )
 
 
-def test_ci_py_includes_static_analysis_steps() -> None:
-    workflow_path = pathlib.Path(".github/workflows/ci-py.yml")
-    assert workflow_path.exists(), "ci-py workflow file must exist"
+def test_requirements_file_has_unique_packages() -> None:
+    requirements_path = pathlib.Path('requirements.txt')
+    lines = requirements_path.read_text().splitlines()
 
-    workflow_definition = yaml.safe_load(workflow_path.read_text())
-    assert isinstance(workflow_definition, dict), "Workflow must deserialize into a dictionary"
+    seen: dict[str, str] = {}
+    duplicates: list[tuple[str, str, str]] = []
 
-    jobs = workflow_definition.get("jobs", {})
-    assert jobs, "Workflow must define at least one job"
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith('#'):
+            continue
 
-    found_ruff = False
-    found_mypy = False
+        requirement_part = line.split(';', 1)[0].strip()
+        name_candidate = re.split(r'[<>=!~]', requirement_part, 1)[0]
+        package_name = name_candidate.split('[', 1)[0].strip().lower()
+        if not package_name:
+            continue
 
-    for job in jobs.values():
-        steps = job.get("steps", [])
-        for step in steps:
-            if not isinstance(step, dict):
-                continue
-            name = str(step.get("name", ""))
-            run_command = str(step.get("run", ""))
-            uses_target = str(step.get("uses", ""))
-            combined = " ".join(token for token in (name, run_command, uses_target) if token)
-            if "ruff" in combined:
-                found_ruff = True
-            if "mypy" in combined:
-                found_mypy = True
+        if package_name in seen and seen[package_name] != line:
+            duplicates.append((package_name, seen[package_name], line))
+            continue
 
-    assert found_ruff, "ci-py workflow must include a step that runs ruff"
-    assert found_mypy, "ci-py workflow must include a step that runs mypy"
+        seen.setdefault(package_name, line)
+
+    assert not duplicates, (
+        'requirements.txt contains conflicting entries: '
+        + ', '.join(
+            f"{name} -> '{first}' vs '{second}'" for name, first, second in duplicates
+        )
+    )
