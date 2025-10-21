@@ -3,6 +3,7 @@ import subprocess
 import sys
 
 import pytest
+import yaml
 
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -95,3 +96,34 @@ def test_run_docker_build_smoke_invokes_docker_build(monkeypatch: pytest.MonkeyP
     assert command[file_index + 1] == str(context / "Dockerfile")
     assert command[-1] == str(context)
     assert captured["check"] is True
+
+
+def test_ci_py_includes_static_analysis_steps() -> None:
+    workflow_path = pathlib.Path(".github/workflows/ci-py.yml")
+    assert workflow_path.exists(), "ci-py workflow file must exist"
+
+    workflow_definition = yaml.safe_load(workflow_path.read_text())
+    assert isinstance(workflow_definition, dict), "Workflow must deserialize into a dictionary"
+
+    jobs = workflow_definition.get("jobs", {})
+    assert jobs, "Workflow must define at least one job"
+
+    found_ruff = False
+    found_mypy = False
+
+    for job in jobs.values():
+        steps = job.get("steps", [])
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            name = str(step.get("name", ""))
+            run_command = str(step.get("run", ""))
+            uses_target = str(step.get("uses", ""))
+            combined = " ".join(token for token in (name, run_command, uses_target) if token)
+            if "ruff" in combined:
+                found_ruff = True
+            if "mypy" in combined:
+                found_mypy = True
+
+    assert found_ruff, "ci-py workflow must include a step that runs ruff"
+    assert found_mypy, "ci-py workflow must include a step that runs mypy"

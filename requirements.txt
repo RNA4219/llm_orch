@@ -7,3 +7,5 @@ pyyaml==6.0.2
 tenacity==9.0.0
 tomli==2.0.1; python_version < '3.11'
 pytest==8.3.3
+ruff==0.6.9
+mypy==1.13.0
