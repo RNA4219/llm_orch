@@ -101,6 +101,25 @@ routes:
     )
 
 
+def test_models_endpoint_returns_expected_shape(route_test_config: Path) -> None:
+    app = load_app("1")
+    client = TestClient(app)
+
+    response = client.get("/v1/models")
+    assert response.status_code == 200
+
+    payload = response.json()
+    assert payload["object"] == "list"
+    assert isinstance(payload["data"], list)
+
+    dummy_entry = next((item for item in payload["data"] if item["provider"] == "dummy"), None)
+    assert dummy_entry is not None
+    assert dummy_entry["id"] == "dummy"
+    assert dummy_entry["object"] == "model"
+    assert dummy_entry["owned_by"] == "dummy"
+    assert "dummy_alt" in dummy_entry.get("aliases", [])
+
+
 def test_route_planner_skips_provider_after_consecutive_failures(
     route_test_config: Path,
 ) -> None:

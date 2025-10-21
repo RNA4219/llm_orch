@@ -132,6 +132,84 @@ docker compose up
 - プライマリプロバイダが初回チャンク生成前に 5xx や接続例外を返した場合はルート定義のフォールバック先へ自動で切り替わり、すべて失敗した場合のみJSONエラーを返します。再試行不可な 4xx/429 は即座にJSONエラーとなり、429/5xx時は `retry_after` を付与します。
 - `ProviderGuards` によりRPM/並列/TPM制御がストリームでも適用され、フォールバックごとにスロットが解放・再取得されるため、TPMバケット残量が不足すると待機またはエラーになります。
 
+### Python SDK でのSSEストリーミング
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:31001/v1", api_key="sk-local-1")
+
+with client.chat.completions.stream(
+    model="gpt-4o-mini",
+    messages=[
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "SSEで自己紹介を短く返して。"},
+    ],
+    temperature=0.7,
+    max_tokens=256,
+) as stream:
+    for event in stream:
+        if event.type == "response.output_text.delta":
+            print(event.delta, end="")
+    print()
+```
+
+<!-- schema: ChatRequestStreamPython -->
+```json
+{
+  "model": "gpt-4o-mini",
+  "messages": [
+    {"role": "system", "content": "You are a helpful assistant."},
+    {"role": "user", "content": "SSEで自己紹介を短く返して。"}
+  ],
+  "temperature": 0.7,
+  "max_tokens": 256,
+  "stream": true
+}
+```
+
+### JavaScript SDK でのSSEストリーミング
+
+```javascript
+import OpenAI from "openai";
+
+const client = new OpenAI({
+  baseURL: "http://localhost:31001/v1",
+  apiKey: process.env.OPENAI_API_KEY ?? "sk-local-1",
+});
+
+const stream = await client.chat.completions.stream({
+  model: "gpt-4o-mini",
+  messages: [
+    { role: "system", content: "You respond with JSON fragments." },
+    { role: "user", content: "進捗報告テンプレートをストリームで送って。" },
+  ],
+  temperature: 0.5,
+  max_tokens: 200,
+});
+
+for await (const event of stream) {
+  if (event.type === "response.output_text.delta") {
+    process.stdout.write(event.delta);
+  }
+}
+process.stdout.write("\n");
+```
+
+<!-- schema: ChatRequestStreamJavaScript -->
+```json
+{
+  "model": "gpt-4o-mini",
+  "messages": [
+    {"role": "system", "content": "You respond with JSON fragments."},
+    {"role": "user", "content": "進捗報告テンプレートをストリームで送って。"}
+  ],
+  "temperature": 0.5,
+  "max_tokens": 200,
+  "stream": true
+}
+```
+
 ## レスポンスヘッダ
 
 - すべての `/v1/chat/completions` 応答（成功・エラー・SSE）で `x-orch-request-id` / `x-orch-provider` / `x-orch-fallback-attempts` を返却します。フォールバックが発生した場合は試行回数に応じて `x-orch-fallback-attempts` が加算されます。
@@ -155,6 +233,36 @@ docker compose up
 
 - `x-orch-sticky-key: <任意キー>` を付与した `/v1/chat/completions` リクエストは、該当キーに対し TTL 期間中同じプロバイダへ固定されます。
 - 既存クライアントは `X-Orch-Session` ヘッダでも同等の動作を利用できます。
+
+### curl での sticky ヘッダ指定
+
+```bash
+curl -N http://localhost:31001/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "X-Orch-Session: checkout-42" \
+  -d '{
+        "model": "gpt-4o-mini",
+        "messages": [
+          {"role": "system", "content": "You are a routing assistant."},
+          {"role": "user", "content": "最新レコメンドの候補を3つ提案して。"}
+        ],
+        "temperature": 0.3,
+        "stream": false
+      }'
+```
+
+<!-- schema: ChatRequestStickyCurl -->
+```json
+{
+  "model": "gpt-4o-mini",
+  "messages": [
+    {"role": "system", "content": "You are a routing assistant."},
+    {"role": "user", "content": "最新レコメンドの候補を3つ提案して。"}
+  ],
+  "temperature": 0.3,
+  "stream": false
+}
+```
 
 ## 既知の制限
 
