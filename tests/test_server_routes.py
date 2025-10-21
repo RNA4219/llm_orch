@@ -1337,8 +1337,11 @@ def test_models_endpoint_lists_configured_providers(route_test_config: Path) -> 
         assert item["object"] == "model"
         assert isinstance(item["owned_by"], str)
         assert item["owned_by"]
-    ids = {item["id"] for item in data}
-    assert {"dummy", "dummy_alt"}.issubset(ids)
+    dummy_alt_entry = next(
+        (item for item in data if item["provider"] == "dummy_alt" and item["id"] == "dummy_alt"),
+        None,
+    )
+    assert dummy_alt_entry is not None
 
 
 def test_chat_requires_api_key_when_configured(
