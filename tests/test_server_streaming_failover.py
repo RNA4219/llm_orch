@@ -11,12 +11,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from fastapi.testclient import TestClient
+from fastapi.testclient import TestClient  # noqa: E402
 
-from src.orch.router import RouteDef, RouteTarget
+from src.orch.router import RouteDef, RouteTarget  # noqa: E402
 
-from tests.test_server_routes import load_app
-from tests.test_server_streaming_routing import (
+from tests.test_server_routes import load_app  # noqa: E402
+from tests.test_server_streaming_routing import (  # noqa: E402
     _DummyGuard,
     _Registry,
     _http_status_error,
