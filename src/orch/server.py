@@ -1,4 +1,5 @@
 import asyncio
+import builtins
 import inspect
 import json
 import logging
@@ -48,6 +49,25 @@ from .providers import ProviderRegistry, UnsupportedContentBlockError
 from .rate_limiter import ProviderGuards
 from .router import ProviderDef, RouteDef, RoutePlanner, load_config
 from .types import ChatRequest, ProviderChatResponse, chat_response_from_provider
+
+_BUILTIN_ANEXT = getattr(builtins, "anext", None)
+_MISSING = object()
+
+
+async def anext(iterator: AsyncIterator[Any], default: Any = _MISSING) -> Any:
+    """Await ``iterator.__anext__`` with optional default value support."""
+
+    if _BUILTIN_ANEXT is not None:
+        if default is _MISSING:
+            return await _BUILTIN_ANEXT(iterator)
+        return await _BUILTIN_ANEXT(iterator, default)
+
+    try:
+        return await iterator.__anext__()
+    except StopAsyncIteration:
+        if default is not _MISSING:
+            return default
+        raise
 
 logger = logging.getLogger(__name__)
 
@@ -240,6 +260,7 @@ def _apply_provider_aliases(
 
 
 class ModelInfo(BaseModel):
+    """Model metadata entry with canonical identifiers and alias information."""
     id: str
     object: Literal["model"] = "model"
     owned_by: str
@@ -249,6 +270,7 @@ class ModelInfo(BaseModel):
 
 
 class ModelListResponse(BaseModel):
+    """Response envelope for `/v1/models` exposing :class:`ModelInfo` entries."""
     object: Literal["list"] = "list"
     data: list[ModelInfo]
 
@@ -596,12 +618,11 @@ async def list_models() -> ModelListResponse:
 
     models: list[ModelInfo] = []
     for name, provider_def in sorted(cfg.providers.items()):
-        if name in alias_map:
-            continue
         alias_list = sorted(alias_groups.get(name, ()))
+        model_id = name if name in alias_map else provider_def.model or name
         models.append(
             ModelInfo(
-                id=provider_def.model or name,
+                id=model_id,
                 owned_by=provider_def.type,
                 provider=name,
                 model=provider_def.model,

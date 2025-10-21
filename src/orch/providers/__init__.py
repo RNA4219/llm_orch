@@ -9,6 +9,7 @@ import httpx
 
 from ..router import ProviderDef
 from ..types import ProviderChatResponse
+from .openai import OpenAICompatProvider
 
 # [ ] openai移行完了
 
