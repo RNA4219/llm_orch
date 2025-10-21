@@ -18,6 +18,10 @@ jobs:
       - name: Run mypy
         run: . .venv/bin/activate && mypy --strict src
       - run: mkdir -p logs
+      - name: Run ruff
+        run: . .venv/bin/activate && ruff check .
+      - name: Run mypy
+        run: . .venv/bin/activate && mypy --strict src
       - run: . .venv/bin/activate && pytest -q --junitxml=logs/pytest.xml
       - name: Export pytest results
         if: always()

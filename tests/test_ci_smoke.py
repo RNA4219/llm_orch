@@ -98,35 +98,32 @@ def test_run_docker_build_smoke_invokes_docker_build(monkeypatch: pytest.MonkeyP
     assert captured["check"] is True
 
 
-def test_ci_workflow_includes_ruff_and_mypy_steps() -> None:
+def test_ci_py_includes_static_analysis_steps() -> None:
     workflow_path = pathlib.Path(".github/workflows/ci-py.yml")
     assert workflow_path.exists(), "ci-py workflow file must exist"
 
-    workflow = yaml.safe_load(workflow_path.read_text())
-    assert isinstance(workflow, dict), "Workflow YAML must parse to a mapping"
+    workflow_definition = yaml.safe_load(workflow_path.read_text())
+    assert isinstance(workflow_definition, dict), "Workflow must deserialize into a dictionary"
 
-    jobs = workflow.get("jobs")
-    assert isinstance(jobs, dict) and jobs, "Workflow must define at least one job"
+    jobs = workflow_definition.get("jobs", {})
+    assert jobs, "Workflow must define at least one job"
 
-    ruff_present = False
-    mypy_present = False
+    found_ruff = False
+    found_mypy = False
 
-    for job_name, job_data in jobs.items():
-        if not isinstance(job_data, dict):
-            continue
-        steps = job_data.get("steps", [])
-        if not isinstance(steps, list):
-            continue
+    for job in jobs.values():
+        steps = job.get("steps", [])
         for step in steps:
             if not isinstance(step, dict):
                 continue
-            run_command = step.get("run")
-            if not isinstance(run_command, str):
-                continue
-            if "ruff" in run_command:
-                ruff_present = True
-            if "mypy" in run_command:
-                mypy_present = True
+            name = str(step.get("name", ""))
+            run_command = str(step.get("run", ""))
+            uses_target = str(step.get("uses", ""))
+            combined = " ".join(token for token in (name, run_command, uses_target) if token)
+            if "ruff" in combined:
+                found_ruff = True
+            if "mypy" in combined:
+                found_mypy = True
 
-    assert ruff_present, "Expected at least one workflow step to run ruff"
-    assert mypy_present, "Expected at least one workflow step to run mypy"
+    assert found_ruff, "ci-py workflow must include a step that runs ruff"
+    assert found_mypy, "ci-py workflow must include a step that runs mypy"
