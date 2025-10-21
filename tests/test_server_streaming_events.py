@@ -1,24 +1,44 @@
 from __future__ import annotations
 
+import importlib
 import json
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, AsyncIterator, Callable
+from typing import TYPE_CHECKING, Any, AsyncIterator, Callable
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
 
-from src.orch.router import RouteDef, RouteTarget
-from src.orch.types import ProviderStreamChunk
-from tests.test_server_routes import load_app
+if TYPE_CHECKING:
+    from src.orch.types import ProviderStreamChunk
 
 StreamFn = Callable[..., AsyncIterator[Any]]
+
+
+def load_app(dummy_env: str | None = None) -> FastAPI:
+    module_name = "src.orch.server"
+    sys.modules.pop(module_name, None)
+    sys.modules.pop("src.orch", None)
+    if dummy_env is None:
+        os.environ.pop("ORCH_USE_DUMMY", None)
+    else:
+        os.environ["ORCH_USE_DUMMY"] = dummy_env
+    project_root = Path(__file__).resolve().parents[1]
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+    importlib.invalidate_caches()
+    module = importlib.import_module(module_name)
+    return module.app
+
+
+def ensure_project_root_on_path() -> None:
+    project_root = Path(__file__).resolve().parents[1]
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
 
 
 def _parse_sse_payload(payload: str) -> list[tuple[str | None, str]]:
@@ -41,6 +61,9 @@ def _collect_sse_events(
     *,
     guard_registry: Any | None = None,
 ) -> list[tuple[str | None, str]]:
+    ensure_project_root_on_path()
+    from src.orch.router import RouteDef, RouteTarget
+
     app = load_app("1")
     server_module = sys.modules["src.orch.server"]
     model_name = "mock-provider"
@@ -96,6 +119,9 @@ def _collect_sse_events(
 
 
 def test_streaming_events_emit_spec_names(monkeypatch: MonkeyPatch) -> None:
+    ensure_project_root_on_path()
+    from src.orch.types import ProviderStreamChunk
+
     async def _stream(*_args: Any, **_kwargs: Any) -> AsyncIterator[ProviderStreamChunk]:
         yield ProviderStreamChunk(event_type="message_start", delta={"role": "assistant"})
         yield ProviderStreamChunk(event_type="delta", delta={"content": "Hel"})
@@ -156,6 +182,8 @@ def test_streaming_structured_events_are_normalized(monkeypatch: MonkeyPatch) ->
 
 
 def test_streaming_done_emitted_once_for_empty_stream(monkeypatch: MonkeyPatch) -> None:
+    ensure_project_root_on_path()
+    from src.orch.types import ProviderStreamChunk
     async def _stream(*_args: Any, **_kwargs: Any) -> AsyncIterator[ProviderStreamChunk]:
         if False:  # pragma: no cover - satisfy async generator semantics
             yield ProviderStreamChunk()
@@ -166,6 +194,9 @@ def test_streaming_done_emitted_once_for_empty_stream(monkeypatch: MonkeyPatch) 
 
 
 def test_streaming_emits_without_guard(monkeypatch: MonkeyPatch) -> None:
+    ensure_project_root_on_path()
+    from src.orch.types import ProviderStreamChunk
+
     class _MissingGuards:
         def get(self, key: str) -> Any:  # pragma: no cover - exercised via test
             raise KeyError(key)
