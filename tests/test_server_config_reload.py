@@ -2,27 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import importlib
-import os
 import sys
 import time
 from pathlib import Path
 from threading import Event
-from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from tests.test_server_routes import load_app
+from tests.test_server_routes import ensure_project_root_on_path, load_app
 
 from src.orch.types import ProviderChatResponse
 
 
 def test_config_refresh_loop_runs_and_stops(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    ensure_project_root_on_path()
     configs = {
         "providers.dummy.toml": "[dummy]\ntype = \"dummy\"\nmodel = \"dummy\"\n",
         "router.yaml": (
@@ -306,6 +300,7 @@ def test_config_refresh_loop_applies_reload_when_planner_requests(
 def test_config_refresh_loop_reloads_when_planner_requests(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    ensure_project_root_on_path()
     sys.modules.pop("src.orch.server", None)
     importlib.invalidate_caches()
     server_module = importlib.import_module("src.orch.server")
