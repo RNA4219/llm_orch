@@ -4,7 +4,7 @@
 
 ## Unreleased
 
-- `requirements.txt` の `ruff` と `mypy` を重複解消し、最新バージョン（`ruff==0.6.9`, `mypy==1.13.0`）に統一。
+- `requirements.txt` の `ruff` / `mypy` の重複行を整理し、CI 用ツールとして単一バージョン（`ruff==0.6.9`, `mypy==1.13.0`）に固定。
 
 ## v0.1.0 - 2024-01-01
 
