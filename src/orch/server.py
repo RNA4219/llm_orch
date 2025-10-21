@@ -12,12 +12,13 @@ from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel
 
 
 from .metrics import MetricsLogger
@@ -214,6 +215,20 @@ def _apply_provider_aliases(
         return
     registry.providers = _AliasProviderMap(registry.providers, aliases)
     guard_registry.guards = _AliasProviderMap(guard_registry.guards, aliases)
+
+
+class ModelInfo(BaseModel):
+    id: str
+    object: Literal["model"] = "model"
+    owned_by: str
+    provider: str
+    model: str
+    aliases: list[str] | None = None
+
+
+class ModelListResponse(BaseModel):
+    object: Literal["list"] = "list"
+    data: list[ModelInfo]
 
 
 def _make_response_headers(*, req_id: str, provider: str | None, attempts: int) -> dict[str, str]:
@@ -547,6 +562,32 @@ def _render_prometheus() -> bytes:
 MAX_PROVIDER_ATTEMPTS = 3
 BAD_GATEWAY_STATUS = 502
 STREAMING_UNSUPPORTED_ERROR = "streaming responses are not supported"
+
+
+@app.get("/v1/models", response_model=ModelListResponse)
+async def list_models() -> ModelListResponse:
+    alias_map = _build_alias_map(cfg.providers) if USE_DUMMY else {}
+    alias_groups: dict[str, list[str]] = {}
+    for alias, canonical in alias_map.items():
+        alias_groups.setdefault(canonical, []).append(alias)
+
+    models: list[ModelInfo] = []
+    for name, provider_def in sorted(cfg.providers.items()):
+        if name in alias_map:
+            continue
+        alias_list = sorted(alias_groups.get(name, ()))
+        models.append(
+            ModelInfo(
+                id=provider_def.model or name,
+                owned_by=provider_def.type,
+                provider=name,
+                model=provider_def.model,
+                aliases=alias_list or None,
+            )
+        )
+
+    return ModelListResponse(data=models)
+
 
 @app.get("/healthz")
 async def healthz() -> dict[str, Any]:
