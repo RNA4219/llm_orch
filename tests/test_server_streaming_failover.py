@@ -7,13 +7,15 @@ from unittest.mock import Mock
 
 import pytest
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
 from fastapi.testclient import TestClient
 
-from src.orch.router import RouteDef, RouteTarget
+try:
+    from src.orch.router import RouteDef, RouteTarget
+except ModuleNotFoundError:  # pragma: no cover - test fallback
+    project_root = Path(__file__).resolve().parents[1]
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+    from src.orch.router import RouteDef, RouteTarget
 
 from tests.test_server_routes import load_app
 from tests.test_server_streaming_routing import (
