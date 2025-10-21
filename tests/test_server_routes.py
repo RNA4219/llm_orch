@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
 import os
 import sys
 from collections.abc import Callable
@@ -10,17 +11,13 @@ from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
 from pathlib import Path
 from types import MethodType, SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
-if TYPE_CHECKING:
-    from src.orch.router import RouteDef, RoutePlanner
-
 
 def load_app(dummy_env: str | None = None) -> FastAPI:
     module_name = "src.orch.server"
@@ -102,6 +99,25 @@ routes:
     primary: dummy
 """.strip()
     )
+
+
+def test_models_endpoint_returns_expected_shape(route_test_config: Path) -> None:
+    app = load_app("1")
+    client = TestClient(app)
+
+    response = client.get("/v1/models")
+    assert response.status_code == 200
+
+    payload = response.json()
+    assert payload["object"] == "list"
+    assert isinstance(payload["data"], list)
+
+    dummy_entry = next((item for item in payload["data"] if item["provider"] == "dummy"), None)
+    assert dummy_entry is not None
+    assert dummy_entry["id"] == "dummy"
+    assert dummy_entry["object"] == "model"
+    assert dummy_entry["owned_by"] == "dummy"
+    assert "dummy_alt" in dummy_entry.get("aliases", [])
 
 
 def test_route_planner_skips_provider_after_consecutive_failures(
@@ -952,6 +968,57 @@ def _make_http_status_error(status: int, retry_after: str | None = None) -> http
 
 
 @pytest.mark.parametrize(
+    ("scenario", "expected_status", "expected_code"),
+    [
+        ("auth", 401, "invalid_api_key"),
+        ("rate_limit", 429, "rate_limit"),
+        ("server_error", 502, "provider_server_error"),
+    ],
+)
+def test_chat_error_code_is_enumerated(
+    route_test_config: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    scenario: str,
+    expected_status: int,
+    expected_code: str,
+) -> None:
+    _write_single_provider_router(route_test_config)
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+    client = TestClient(app)
+
+    if scenario == "auth":
+        monkeypatch.setattr(server_module, "INBOUND_API_KEYS", frozenset({"secret"}))
+    else:
+        status_map = {"rate_limit": 429, "server_error": 503}
+
+        class ErroringProvider:
+            model = "dummy"
+
+            async def chat(self, *args: object, **kwargs: object) -> object:
+                raise _make_http_status_error(status_map[scenario])
+
+        monkeypatch.setitem(
+            server_module.providers.providers, "dummy", ErroringProvider()
+        )
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "dummy", "messages": [{"role": "user", "content": "hi"}]},
+    )
+
+    assert response.status_code == expected_status
+    payload = response.json()
+    error_body = payload.get("error")
+    assert isinstance(error_body, dict)
+    error_code = error_body.get("code")
+    assert isinstance(error_code, str)
+    enum_values = {member.value for member in server_module.ErrorCode}
+    assert error_code in enum_values
+    assert error_code == expected_code
+
+
+@pytest.mark.parametrize(
     "retry_after_seconds, use_http_date",
     [(37, False), (90, True)],
 )
@@ -1250,6 +1317,24 @@ def test_metrics_endpoint_returns_prometheus_text(
     assert "# HELP" in response.text
 
 
+def test_models_endpoint_lists_configured_providers(route_test_config: Path) -> None:
+    client = TestClient(load_app("1"))
+    response = client.get("/v1/models")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["object"] == "list"
+    data = payload.get("data")
+    assert isinstance(data, list)
+    for item in data:
+        assert isinstance(item, dict)
+        assert item["object"] == "model"
+        assert isinstance(item["owned_by"], str)
+        assert item["owned_by"]
+    ids = {item["id"] for item in data}
+    assert {"dummy", "dummy_alt"}.issubset(ids)
+
+
 def test_chat_requires_api_key_when_configured(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1266,6 +1351,21 @@ def test_chat_requires_api_key_when_configured(
         },
     )
     assert response.status_code == 401
+
+
+def test_logs_warning_when_api_key_not_configured(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv("ORCH_INBOUND_API_KEYS", "")
+    monkeypatch.setenv("ORCH_CORS_ALLOW_ORIGINS", "")
+    with caplog.at_level(logging.WARNING):
+        app = load_app("1")
+        client = TestClient(app)
+        response = client.get("/metrics")
+
+    assert response.status_code == 200
+    warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
+    assert any("APIキー保護が無効" in message for message in warnings)
 
 def test_chat_accepts_tool_choice_strings(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
@@ -2180,6 +2280,63 @@ concurrency = 1
     fallback_record = records[-1]
     assert fallback_record["ok"] is False
     assert fallback_record["model"] == "prov-model"
+
+
+def test_chat_logs_error_context(
+    route_test_config: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    providers_file = route_test_config / "providers.dummy.toml"
+    providers_file.write_text(
+        """
+[dummy]
+type = "dummy"
+model = ""
+base_url = ""
+rpm = 60
+concurrency = 1
+""".strip()
+    )
+    _write_single_provider_router(route_test_config)
+
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+
+    class FailingProvider:
+        model = ""
+
+        def __init__(self) -> None:
+            self.chat = AsyncMock(side_effect=RuntimeError("boom"))
+
+    monkeypatch.setattr(server_module, "MAX_PROVIDER_ATTEMPTS", 1)
+    monkeypatch.setitem(
+        server_module.providers.providers,
+        "dummy",
+        FailingProvider(),
+    )
+
+    client = TestClient(app)
+    caplog.clear()
+    with caplog.at_level(logging.ERROR):
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "",
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+        )
+
+    assert response.status_code == 502
+    req_id = response.headers["x-orch-request-id"]
+    provider = response.headers["x-orch-provider"]
+    attempts = int(response.headers["x-orch-fallback-attempts"]) + 1
+
+    error_records = [record for record in caplog.records if record.levelno >= logging.ERROR]
+    assert error_records
+    last_record = error_records[-1]
+    message = last_record.getMessage()
+    assert f"req_id={req_id}" in message
+    assert f"provider={provider}" in message
+    assert f"attempts={attempts}" in message
 
 
 def test_chat_missing_header_routes_to_task_header_default(

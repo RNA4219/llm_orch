@@ -1,6 +1,7 @@
 import importlib
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -30,6 +31,35 @@ def test_health():
     r = c.get("/healthz")
     assert r.status_code == 200
     assert r.json()["status"] == "ok"
+
+
+def test_health_includes_planner_summary() -> None:
+    client = TestClient(load_app())
+    response = client.get("/healthz")
+    assert response.status_code == 200
+
+    payload = response.json()
+    planner = payload.get("planner")
+    assert isinstance(planner, dict)
+
+    last_reload = planner.get("last_reload_at")
+    assert isinstance(last_reload, str) and last_reload
+    # `fromisoformat` does not support trailing "Z" prior to Python 3.11.
+    datetime.fromisoformat(last_reload.replace("Z", "+00:00"))
+
+    watch_entries = planner.get("watch")
+    assert isinstance(watch_entries, list) and watch_entries
+    for entry in watch_entries:
+        assert isinstance(entry, dict)
+        assert isinstance(entry.get("name"), str)
+        path = entry.get("path")
+        assert isinstance(path, str) and path
+        # Avoid exposing absolute paths.
+        assert not os.path.isabs(path)
+        last_modified = entry.get("last_modified_at")
+        if last_modified is not None:
+            assert isinstance(last_modified, str)
+            datetime.fromisoformat(last_modified.replace("Z", "+00:00"))
 
 
 def test_chat_dummy():

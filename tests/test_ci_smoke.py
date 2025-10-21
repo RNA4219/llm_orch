@@ -1,4 +1,14 @@
 import pathlib
+import subprocess
+import sys
+
+import pytest
+
+PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from tools.ci.docker_build_smoke import run_docker_build_smoke
 
 import yaml
 
