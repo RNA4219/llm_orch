@@ -5,6 +5,7 @@ import logging
 import os
 import time
 import uuid
+from enum import Enum
 from collections import defaultdict
 from collections.abc import AsyncIterator, Iterator, MutableMapping
 from contextlib import asynccontextmanager
@@ -12,8 +13,6 @@ from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any, Literal
-
-from typing_extensions import TypedDict
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -36,17 +35,6 @@ CONFIG_DIR = os.environ.get("ORCH_CONFIG_DIR", os.path.join(os.path.dirname(os.p
 
 TRUTHY_VALUES: frozenset[str] = frozenset({"1", "true", "yes", "on"})
 FALSY_VALUES: frozenset[str] = frozenset({"0", "false", "no", "off"})
-
-
-class _ModelInfo(TypedDict):
-    id: str
-    object: Literal["model"]
-    owned_by: str
-
-
-class _ModelListResponse(TypedDict):
-    object: Literal["list"]
-    data: list[_ModelInfo]
 
 
 def _env_var_as_bool(name: str, *, default: bool = False) -> bool:
@@ -578,6 +566,7 @@ STREAMING_UNSUPPORTED_ERROR = "streaming responses are not supported"
 
 @app.get("/v1/models", response_model=ModelListResponse)
 async def list_models() -> ModelListResponse:
+    """Return configured providers with canonical ids, provider, model, and aliases."""
     alias_map = _build_alias_map(cfg.providers)
     alias_groups: dict[str, list[str]] = {}
     for alias, canonical in alias_map.items():
@@ -617,21 +606,6 @@ async def healthz() -> dict[str, Any]:
 async def metrics_endpoint(req: Request) -> Response:
     _require_api_key(req)
     return Response(_render_prometheus(), media_type=PROM_CONTENT_TYPE)
-
-
-@app.get("/v1/models")
-async def list_models() -> _ModelListResponse:
-    models: list[_ModelInfo] = []
-    for name, definition in sorted(cfg.providers.items()):
-        owner = definition.type or name
-        model_entry: _ModelInfo = {
-            "id": name,
-            "object": "model",
-            "owned_by": owner,
-        }
-        models.append(model_entry)
-    payload: _ModelListResponse = {"object": "list", "data": models}
-    return payload
 
 
 @app.post("/v1/chat/completions")
