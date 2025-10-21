@@ -1,3 +1,4 @@
+import importlib
 import json
 import os
 from collections.abc import MutableMapping
@@ -909,6 +910,12 @@ class DummyProvider(BaseProvider):
             content=f"dummy:{last_user}",
             finish_reason="stop",
         )
+
+
+_openai_module = importlib.import_module(".openai", __name__)
+OpenAICompatProvider = _openai_module.OpenAICompatProvider
+
+
 class ProviderRegistry:
     _PROVIDER_FACTORIES: dict[str, type[BaseProvider]] = {
         "openai": OpenAICompatProvider,

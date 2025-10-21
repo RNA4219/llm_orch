@@ -6,7 +6,6 @@ import logging
 import os
 import time
 import uuid
-from enum import Enum
 from collections import defaultdict
 from collections.abc import AsyncIterator, Iterator, MutableMapping
 from contextlib import asynccontextmanager
@@ -20,6 +19,28 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
+
+try:  # Python 3.10+
+    from builtins import anext as _anext
+except ImportError:  # pragma: no cover - fallback for older Python versions
+    _anext = None
+
+
+if _anext is None:  # pragma: no cover - fallback retained for lint clarity
+    _ANEXT_MISSING = object()
+
+    async def anext(
+        iterator: AsyncIterator[Any],
+        default: object = _ANEXT_MISSING,
+    ) -> Any:
+        try:
+            return await iterator.__anext__()
+        except StopAsyncIteration:
+            if default is _ANEXT_MISSING:
+                raise
+            return default
+else:
+    anext = _anext
 
 
 from .metrics import MetricsLogger
