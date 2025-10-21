@@ -22,6 +22,11 @@ def _strip_namespace(tag: str) -> str:
 
 
 def convert_junit_to_jsonl(input_path: Path, output_path: Path) -> None:
+    if not input_path.exists():
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("", encoding="utf-8")
+        return
+
     tree = ET.parse(input_path)
     root = tree.getroot()
     output_path.parent.mkdir(parents=True, exist_ok=True)
