@@ -117,6 +117,7 @@ def test_models_endpoint_returns_expected_shape(route_test_config: Path) -> None
     assert dummy_entry["id"] == "dummy"
     assert dummy_entry["object"] == "model"
     assert dummy_entry["owned_by"] == "dummy"
+    assert dummy_entry["model"] == "dummy"
     assert "dummy_alt" in dummy_entry.get("aliases", [])
 
 
