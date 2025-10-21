@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
 from pathlib import Path
 from types import MethodType, SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, Mock
 
 import httpx
@@ -33,6 +33,10 @@ def load_app(dummy_env: str | None = None) -> FastAPI:
     importlib.invalidate_caches()
     module = importlib.import_module(module_name)
     return module.app
+
+
+if TYPE_CHECKING:
+    from src.orch.types import ProviderChatResponse
 
 
 def ensure_project_root_on_path() -> None:
@@ -520,7 +524,8 @@ def test_stream_usage_events_record_guard_and_metrics(
     assert fake_guard.record_usage_calls
     assert fake_guard.record_usage_calls[0] == (fake_guard.lease, 9, 5)
     assert metric_records
-    record = metric_records[0]; assert record["usage_prompt"] == 9 and record["usage_completion"] == 5
+    record = metric_records[0]
+    assert record["usage_prompt"] == 9 and record["usage_completion"] == 5
 
 
 @pytest.mark.parametrize(
@@ -2806,7 +2811,7 @@ def test_chat_retries_success_after_transient_failures(
             tools: list[dict[str, Any]] | None = None,
             tool_choice: dict[str, Any] | None = None,
             function_call: dict[str, Any] | None = None,
-        ) -> "ProviderChatResponse":
+        ) -> ProviderChatResponse:
             from src.orch.types import ProviderChatResponse
 
             _ = tools
