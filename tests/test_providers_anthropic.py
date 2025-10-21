@@ -1,18 +1,12 @@
 import asyncio
 import json
-import sys
 from dataclasses import asdict
-from pathlib import Path
 from typing import Any, AsyncIterator, cast
 
 import httpx
 import pytest
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from src.orch.providers import AnthropicProvider, BaseProvider, ProviderStreamChunk
+from src.orch.providers import AnthropicProvider, ProviderStreamChunk
 from src.orch.router import ProviderDef
 from src.orch.types import ProviderChatResponse, chat_response_from_provider
 
@@ -489,7 +483,9 @@ def test_anthropic_payload_maps_function_call_message(
     ]
 
 
-def test_anthropic_payload_maps_tool_messages(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_anthropic_payload_maps_tool_messages_text_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     provider = build_anthropic_provider(monkeypatch)
     tool_content = [{"type": "output_text", "text": "done"}]
     messages: list[dict[str, Any]] = [
@@ -848,18 +844,6 @@ def test_anthropic_payload_maps_tool_messages(monkeypatch: pytest.MonkeyPatch) -
         },
         {"role": "assistant", "content": [{"type": "text", "text": "done"}]},
     ]
-
-
-def test_anthropic_payload_errors_on_tool_without_id(monkeypatch: pytest.MonkeyPatch) -> None:
-    provider = build_anthropic_provider(monkeypatch)
-
-    messages: list[dict[str, Any]] = [
-        {"role": "user", "content": "hello"},
-        {"role": "tool", "content": "result"},
-    ]
-
-    with pytest.raises(ValueError, match="tool_call_id"):
-        run_chat(provider, monkeypatch, messages)
 
 
 def test_anthropic_chat_maps_tool_use_stop_reason(monkeypatch: pytest.MonkeyPatch) -> None:

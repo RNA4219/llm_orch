@@ -328,7 +328,7 @@ def test_convert_junit_to_jsonl_handles_nested_testsuites(tmp_path: Path) -> Non
     ]
 
 
-def test_convert_junit_to_jsonl_handles_default_namespace(tmp_path: Path) -> None:
+def test_convert_junit_to_jsonl_handles_custom_namespace(tmp_path: Path) -> None:
     xml_path = tmp_path / "pytest.xml"
     output_path = tmp_path / "out.jsonl"
     write_file(

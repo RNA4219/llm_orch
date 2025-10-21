@@ -1,24 +1,18 @@
 import asyncio
-import sys
 from collections.abc import AsyncGenerator
-from pathlib import Path
 from typing import Any, TypedDict
 
 import httpx
 import pytest
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from src.orch.providers import OpenAICompatProvider  # noqa: E402
-from src.orch.router import ProviderDef  # noqa: E402
+from src.orch.providers import OpenAICompatProvider
+from src.orch.router import ProviderDef
 from src.orch.types import (
     ProviderChatResponse,
     ProviderStreamChunk as ProviderStreamChunkModel,
     chat_response_from_provider,
     provider_chat_response_from_stream,
-)  # noqa: E402
+)
 
 
 class ProviderStreamChunkDict(TypedDict, total=False):
@@ -214,11 +208,14 @@ def test_provider_chat_response_from_stream_merges_chunks() -> None:
     ]
 
     provider_response = provider_chat_response_from_stream("gpt-4o", chunks)
-    assert provider_response.model == "gpt-4o"; assert provider_response.finish_reason == "stop"
-    assert provider_response.usage_prompt_tokens == 5; assert provider_response.usage_completion_tokens == 7
+    assert provider_response.model == "gpt-4o"
+    assert provider_response.finish_reason == "stop"
+    assert provider_response.usage_prompt_tokens == 5
+    assert provider_response.usage_completion_tokens == 7
 
     payload = chat_response_from_provider(provider_response)
-    assert payload["choices"][0]["message"]["content"] == "Hello world"; assert payload["choices"][0]["finish_reason"] == "stop"
+    assert payload["choices"][0]["message"]["content"] == "Hello world"
+    assert payload["choices"][0]["finish_reason"] == "stop"
     assert payload["usage"] == {"prompt_tokens": 5, "completion_tokens": 7, "total_tokens": 12}
 
 

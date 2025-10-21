@@ -1,11 +1,4 @@
-import sys
-from pathlib import Path
-
 import pytest
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-  sys.path.insert(0, str(PROJECT_ROOT))
 
 import src.orch.rate_limiter as rate_limiter
 from src.orch.rate_limiter import Guard
