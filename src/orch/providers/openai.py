@@ -16,8 +16,9 @@ from ..types import (
     ProviderStreamChunk as ProviderStreamChunkModel,
 )
 
-_VALID_ROLES: frozenset[str] = frozenset({"system", "user", "assistant", "tool"})
 from . import BaseProvider
+
+_VALID_ROLES: frozenset[str] = frozenset({"system", "user", "assistant", "tool"})
 
 
 class OpenAICompatProvider(BaseProvider):

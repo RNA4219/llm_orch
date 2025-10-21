@@ -4,7 +4,7 @@ import os
 from collections.abc import MutableMapping
 from dataclasses import asdict, dataclass
 from urllib.parse import urlparse, urlunparse
-from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List
+from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, cast
 
 import httpx
 
