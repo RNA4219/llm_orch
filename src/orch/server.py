@@ -12,8 +12,7 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from enum import Enum
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -46,7 +45,7 @@ else:
 
 from .metrics import MetricsLogger
 from .providers import ProviderRegistry, UnsupportedContentBlockError
-from .rate_limiter import ProviderGuards
+from .rate_limiter import GuardLease, ProviderGuards
 from .router import ProviderDef, RouteDef, RoutePlanner, load_config
 from .types import ChatRequest, ProviderChatResponse, chat_response_from_provider
 
@@ -160,6 +159,7 @@ def _planner_watch_summary(
 ) -> list[dict[str, Any]]:
     summary: list[dict[str, Any]] = []
     for name, raw_path in watch_files:
+        current_mtime: float | None
         try:
             current_mtime = os.stat(raw_path).st_mtime
         except OSError:
@@ -200,7 +200,7 @@ class ErrorCode(str, Enum):
 
 
 class _AliasProviderMap(MutableMapping[str, Any]):
-    def __init__(self, data: dict[str, Any], aliases: dict[str, str]) -> None:
+    def __init__(self, data: MutableMapping[str, Any], aliases: dict[str, str]) -> None:
         self._data = data
         self._aliases = aliases
 
@@ -652,7 +652,7 @@ async def metrics_endpoint(req: Request) -> Response:
 
 
 @app.post("/v1/chat/completions")
-async def chat_completions(req: Request, body: ChatRequest):
+async def chat_completions(req: Request, body: ChatRequest) -> Response:
     try:
         _require_api_key(req)
     except HTTPException as exc:
@@ -1076,7 +1076,7 @@ async def _stream_chat_response(
                 except TypeError:
                     return model_dump()
             if is_dataclass(payload):
-                return asdict(payload)
+                return asdict(cast(Any, payload))
             return payload
 
         event_name, payload = _extract_event(raw_event)
@@ -1127,7 +1127,7 @@ async def _stream_chat_response(
         provider_model = provider.model or model
         if not hasattr(provider, "chat_stream"):
             planner.record_failure(provider_name)
-            failure_record = {
+            unsupported_record = {
                 "req_id": req_id,
                 "ts": time.time(),
                 "task": task,
@@ -1141,7 +1141,7 @@ async def _stream_chat_response(
                 "usage_prompt": 0,
                 "usage_completion": 0,
             }
-            await _log_metrics(failure_record)
+            await _log_metrics(unsupported_record)
             last_provider = "unsupported"
             last_model = provider_model
             last_status = 400
@@ -1156,7 +1156,7 @@ async def _stream_chat_response(
         queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
         usage_prompt_tokens = usage_completion_tokens = 0
         usage_recorded = False
-        guard_lease: object | None = None
+        guard_lease: GuardLease | None = None
         def _handle_usage_event(normalized: tuple[str | None, Any, bool]) -> None:
             nonlocal usage_prompt_tokens, usage_completion_tokens, usage_recorded, guard_lease
             event_name, payload, _ = normalized

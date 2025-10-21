@@ -2,6 +2,8 @@ import asyncio
 import time
 from collections import deque
 from dataclasses import dataclass
+from types import TracebackType
+from collections.abc import MutableMapping
 from typing import Deque, Dict, List
 
 from .router import ProviderDef
@@ -148,7 +150,12 @@ class Guard:
   async def __aenter__(self) -> GuardLease:
     return await self._acquire(0)
 
-  async def __aexit__(self, exc_type, exc, tb):
+  async def __aexit__(
+    self,
+    exc_type: type[BaseException] | None,
+    exc: BaseException | None,
+    tb: TracebackType | None,
+  ) -> None:
     self._release_current_task()
 
   async def _acquire(self, estimated_prompt_tokens: int) -> GuardLease:
@@ -219,13 +226,18 @@ class _GuardContext:
   async def __aenter__(self) -> GuardLease:
     return await self._guard._acquire(self._estimated)
 
-  async def __aexit__(self, exc_type, exc, tb):
+  async def __aexit__(
+    self,
+    exc_type: type[BaseException] | None,
+    exc: BaseException | None,
+    tb: TracebackType | None,
+  ) -> None:
     self._guard._release_current_task()
 
 
 class ProviderGuards:
   def __init__(self, providers: Dict[str, ProviderDef]):
-    self.guards: Dict[str, Guard] = {
+    self.guards: MutableMapping[str, Guard] = {
       name: Guard(p.rpm, p.concurrency, p.tpm) for name, p in providers.items()
     }
 

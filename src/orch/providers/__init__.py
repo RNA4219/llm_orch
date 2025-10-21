@@ -1,9 +1,10 @@
 import importlib
 import json
 import os
+from collections.abc import MutableMapping
 from dataclasses import asdict, dataclass
 from urllib.parse import urlparse, urlunparse
-from typing import Any, AsyncIterator, Dict, List
+from typing import Any, AsyncIterator, Dict, List, cast
 
 import httpx
 
@@ -102,8 +103,8 @@ class BaseProvider:
         self,
         model: str,
         messages: List[dict[str, Any]],
-        temperature=0.2,
-        max_tokens=2048,
+        temperature: float = 0.2,
+        max_tokens: int = 2048,
         *,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: dict[str, Any] | str | None = None,
@@ -162,12 +163,12 @@ class AnthropicProvider(BaseProvider):
             return raw_content
         if isinstance(raw_content, dict):
             block = cls._normalize_text_block(raw_content)
-            return block["text"]
+            return cast(str, block["text"])
         if isinstance(raw_content, list):
             parts: list[str] = []
             for block in raw_content:
                 normalized_block = cls._normalize_text_block(block)
-                parts.append(normalized_block["text"])
+                parts.append(cast(str, normalized_block["text"]))
             return "".join(parts)
         raise ValueError("Anthropic messages must provide string or list content values.")
 
@@ -522,8 +523,8 @@ class AnthropicProvider(BaseProvider):
         self,
         model: str,
         messages: List[dict[str, Any]],
-        temperature=0.2,
-        max_tokens=2048,
+        temperature: float = 0.2,
+        max_tokens: int = 2048,
         *,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: dict[str, Any] | str | None = None,
@@ -621,8 +622,8 @@ class AnthropicProvider(BaseProvider):
         self,
         model: str,
         messages: List[dict[str, Any]],
-        temperature=0.2,
-        max_tokens=2048,
+        temperature: float = 0.2,
+        max_tokens: int = 2048,
         *,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: dict[str, Any] | str | None = None,
@@ -742,8 +743,8 @@ class OllamaProvider(BaseProvider):
         self,
         model: str,
         messages: List[dict[str, Any]],
-        temperature=0.2,
-        max_tokens=2048,
+        temperature: float = 0.2,
+        max_tokens: int = 2048,
         *,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: dict[str, Any] | str | None = None,
@@ -789,8 +790,8 @@ class OllamaProvider(BaseProvider):
         self,
         model: str,
         messages: List[dict[str, Any]],
-        temperature=0.2,
-        max_tokens=2048,
+        temperature: float = 0.2,
+        max_tokens: int = 2048,
         *,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: dict[str, Any] | str | None = None,
@@ -884,8 +885,8 @@ class DummyProvider(BaseProvider):
         self,
         model: str,
         messages: List[dict[str, Any]],
-        temperature=0.2,
-        max_tokens=2048,
+        temperature: float = 0.2,
+        max_tokens: int = 2048,
         *,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: dict[str, Any] | str | None = None,
@@ -924,7 +925,7 @@ class ProviderRegistry:
     }
 
     def __init__(self, providers: Dict[str, ProviderDef]):
-        self.providers = {}
+        self.providers: MutableMapping[str, BaseProvider] = {}
         for name, d in providers.items():
             provider_type_raw = d.type
             provider_type = provider_type_raw if provider_type_raw is not None else "openai"
