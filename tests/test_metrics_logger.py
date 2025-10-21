@@ -7,9 +7,7 @@ from typing import Any, Dict, Iterable, List, Tuple
 
 import pytest
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+from src.orch.metrics import MetricsLogger
 
 
 def _install_otel_stub() -> None:
@@ -178,8 +176,6 @@ try:  # pragma: no cover - executed during import
 except ModuleNotFoundError:  # pragma: no cover - fallback for test environment
     _install_otel_stub()
     from opentelemetry.sdk.metrics.export import InMemoryMetricReader  # type: ignore[assignment]
-
-from src.orch.metrics import MetricsLogger
 
 
 def _sample_record() -> dict[str, Any]:
