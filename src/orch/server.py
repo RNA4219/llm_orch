@@ -218,6 +218,7 @@ def _apply_provider_aliases(
 
 
 class ModelInfo(BaseModel):
+    """Model metadata entry with canonical identifiers and alias information."""
     id: str
     object: Literal["model"] = "model"
     owned_by: str
@@ -227,6 +228,7 @@ class ModelInfo(BaseModel):
 
 
 class ModelListResponse(BaseModel):
+    """Response envelope for `/v1/models` exposing :class:`ModelInfo` entries."""
     object: Literal["list"] = "list"
     data: list[ModelInfo]
 
