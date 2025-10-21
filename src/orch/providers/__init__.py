@@ -1,6 +1,6 @@
+import importlib
 import json
 import os
-import re
 from dataclasses import asdict, dataclass
 from urllib.parse import urlparse, urlunparse
 from typing import Any, AsyncIterator, Dict, List
@@ -910,7 +910,8 @@ class DummyProvider(BaseProvider):
         )
 
 
-from .openai import OpenAICompatProvider
+_openai_module = importlib.import_module(".openai", __name__)
+OpenAICompatProvider = _openai_module.OpenAICompatProvider
 
 
 class ProviderRegistry:

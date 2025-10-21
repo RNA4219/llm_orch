@@ -7,13 +7,22 @@ import warnings
 from dataclasses import dataclass, field
 from typing import Any, Dict, Literal, Sequence, SupportsInt, cast
 
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PositiveFloat,
+    PositiveInt,
+    ValidationError,
+    model_validator,
+)
+
 if sys.version_info >= (3, 11):  # pragma: no cover - exercised via tests
     import tomllib
 else:  # pragma: no cover - exercised via tests
     tomllib = cast(Any, importlib.import_module("tomli"))
 
 yaml = cast(Any, importlib.import_module("yaml"))
-from pydantic import BaseModel, ConfigDict, Field, PositiveFloat, PositiveInt, ValidationError, model_validator
 
 @dataclass
 class ProviderDef:
