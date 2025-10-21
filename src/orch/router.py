@@ -12,8 +12,9 @@ if sys.version_info >= (3, 11):  # pragma: no cover - exercised via tests
 else:  # pragma: no cover - exercised via tests
     tomllib = cast(Any, importlib.import_module("tomli"))
 
-yaml = cast(Any, importlib.import_module("yaml"))
 from pydantic import BaseModel, ConfigDict, Field, PositiveFloat, PositiveInt, ValidationError, model_validator
+
+yaml = cast(Any, importlib.import_module("yaml"))
 
 @dataclass
 class ProviderDef:

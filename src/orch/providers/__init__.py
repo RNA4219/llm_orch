@@ -1,6 +1,5 @@
 import json
 import os
-import re
 from dataclasses import asdict, dataclass
 from urllib.parse import urlparse, urlunparse
 from typing import Any, AsyncIterator, Dict, List
@@ -9,6 +8,7 @@ import httpx
 
 from ..router import ProviderDef
 from ..types import ProviderChatResponse
+from .openai import OpenAICompatProvider
 
 # [ ] openai移行完了
 
@@ -908,11 +908,6 @@ class DummyProvider(BaseProvider):
             content=f"dummy:{last_user}",
             finish_reason="stop",
         )
-
-
-from .openai import OpenAICompatProvider
-
-
 class ProviderRegistry:
     _PROVIDER_FACTORIES: dict[str, type[BaseProvider]] = {
         "openai": OpenAICompatProvider,
