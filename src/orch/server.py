@@ -566,7 +566,7 @@ STREAMING_UNSUPPORTED_ERROR = "streaming responses are not supported"
 
 @app.get("/v1/models", response_model=ModelListResponse)
 async def list_models() -> ModelListResponse:
-    alias_map = _build_alias_map(cfg.providers) if USE_DUMMY else {}
+    alias_map = _build_alias_map(cfg.providers)
     alias_groups: dict[str, list[str]] = {}
     for alias, canonical in alias_map.items():
         alias_groups.setdefault(canonical, []).append(alias)
