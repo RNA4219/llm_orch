@@ -16,7 +16,12 @@ from collections import defaultdict
 from typing import Any, ClassVar, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover
-    from opentelemetry.sdk.metrics.export import MetricReader
+    from opentelemetry.sdk.metrics.export import MetricReader  # type: ignore[import-not-found]
+else:  # pragma: no cover
+    class MetricReader:  # type: ignore[too-many-ancestors]
+        """Runtime placeholder when OpenTelemetry is unavailable."""
+
+        pass
 
 _TRUTHY = {"1", "true", "yes", "on"}
 _FALSY = {"0", "false", "no", "off"}
@@ -138,10 +143,10 @@ class _OtelMetrics:
     __slots__ = ("_reader", "_previous_provider", "_provider", "_requests_counter", "_latency_histogram", "_shutdown")
 
     def __init__(self, reader: Optional["MetricReader"] = None):
-        from opentelemetry import metrics as otel_metrics
-        from opentelemetry.sdk.metrics import MeterProvider
+        from opentelemetry import metrics as otel_metrics  # type: ignore[import-not-found]
+        from opentelemetry.sdk.metrics import MeterProvider  # type: ignore[import-not-found]
         from opentelemetry.sdk.metrics.export import InMemoryMetricReader
-        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.resources import Resource  # type: ignore[import-not-found]
 
         self._reader = reader or InMemoryMetricReader()
         self._previous_provider = otel_metrics.get_meter_provider()
@@ -235,7 +240,7 @@ class MetricsLogger:
     def _file(self) -> str:
         return os.path.join(self.dir, f"requests-{time.strftime('%Y%m%d')}.jsonl")
 
-    async def write(self, record: dict[str, Any]):
+    async def write(self, record: dict[str, Any]) -> None:
         if self._lock is None:
             self._lock = asyncio.Lock()
         async with self._lock:

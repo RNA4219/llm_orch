@@ -4,16 +4,19 @@ import json
 import math
 import os
 from collections.abc import AsyncIterator
-from typing import Any, List
+from typing import Any, List, Literal, cast
 from urllib.parse import urlparse, urlunparse
 
 import httpx
 
 from ..types import (
+    ProviderChatChoice,
     ProviderChatResponse,
     ProviderStreamChoice,
     ProviderStreamChunk as ProviderStreamChunkModel,
 )
+
+_VALID_ROLES: frozenset[str] = frozenset({"system", "user", "assistant", "tool"})
 from . import BaseProvider
 
 
@@ -154,8 +157,8 @@ class OpenAICompatProvider(BaseProvider):
         self,
         model: str,
         messages: List[dict[str, Any]],
-        temperature=0.2,
-        max_tokens=2048,
+        temperature: float = 0.2,
+        max_tokens: int = 2048,
         *,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: dict[str, Any] | str | None = None,
@@ -188,7 +191,7 @@ class OpenAICompatProvider(BaseProvider):
             r.raise_for_status()
             data = r.json()
         raw_choices = data.get("choices") or []
-        normalized_choices: list[dict[str, Any]] = []
+        normalized_choices: list[ProviderChatChoice] = []
         for index, raw_choice in enumerate(raw_choices):
             if isinstance(raw_choice, dict):
                 normalized_choice = dict(raw_choice)
@@ -206,14 +209,14 @@ class OpenAICompatProvider(BaseProvider):
                     normalized_choice["message"] = normalized_message
                 elif "message" in normalized_choice:
                     normalized_choice["message"] = None
-                normalized_choices.append(normalized_choice)
+                normalized_choices.append(ProviderChatChoice.model_validate(normalized_choice))
             else:
-                normalized_choices.append({"index": index, "message": raw_choice})
-        first_choice: dict[str, Any] = normalized_choices[0] if normalized_choices else {}
-        first_message_raw = first_choice.get("message") if isinstance(first_choice, dict) else None
+                normalized_choices.append(ProviderChatChoice(index=index, message=raw_choice))
+        first_choice = normalized_choices[0] if normalized_choices else ProviderChatChoice()
+        first_message_raw = first_choice.message
         first_message = first_message_raw if isinstance(first_message_raw, dict) else {}
         content = first_message.get("content")
-        finish_reason = first_choice.get("finish_reason")
+        finish_reason = first_choice.finish_reason
         tool_calls = first_message.get("tool_calls")
         function_call = first_message.get("function_call")
         usage = data.get("usage") or {}
@@ -253,7 +256,7 @@ class OpenAICompatProvider(BaseProvider):
         index_value = raw_choice.get("index")
         index = index_value if isinstance(index_value, int) else index_fallback
         delta_field = raw_choice.get("delta")
-        role: str | None = None
+        role: Literal["system", "user", "assistant", "tool"] | None = None
         tool_calls: list[dict[str, Any]] | None = None
         function_call: dict[str, Any] | None = None
         normalized_delta: dict[str, Any] | str | None
@@ -262,8 +265,8 @@ class OpenAICompatProvider(BaseProvider):
                 key: value for key, value in delta_field.items() if value is not None
             }
             role_candidate = normalized_delta.get("role")
-            if isinstance(role_candidate, str) and role_candidate:
-                role = role_candidate
+            if isinstance(role_candidate, str) and role_candidate in _VALID_ROLES:
+                role = cast(Literal["system", "user", "assistant", "tool"], role_candidate)
             raw_tool_calls = normalized_delta.get("tool_calls")
             if isinstance(raw_tool_calls, list):
                 tool_calls = raw_tool_calls
@@ -366,8 +369,8 @@ class OpenAICompatProvider(BaseProvider):
         self,
         model: str,
         messages: List[dict[str, Any]],
-        temperature=0.2,
-        max_tokens=2048,
+        temperature: float = 0.2,
+        max_tokens: int = 2048,
         *,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: dict[str, Any] | str | None = None,
