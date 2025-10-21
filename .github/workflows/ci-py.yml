@@ -13,6 +13,10 @@ jobs:
           python-version: '3.11'
       - run: python -m venv .venv
       - run: . .venv/bin/activate && pip install -r requirements.txt
+      - name: Run ruff
+        run: . .venv/bin/activate && ruff check .
+      - name: Run mypy
+        run: . .venv/bin/activate && mypy --strict src
       - run: mkdir -p logs
       - run: . .venv/bin/activate && pytest -q --junitxml=logs/pytest.xml
       - name: Export pytest results
