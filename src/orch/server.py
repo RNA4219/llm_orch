@@ -1,6 +1,7 @@
 import asyncio
 import inspect
 import json
+import logging
 import os
 import time
 import uuid
@@ -10,12 +11,15 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from typing import Any
+from typing import Any, Literal
+
+from typing_extensions import TypedDict
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel
 
 
 from .metrics import MetricsLogger
@@ -24,12 +28,25 @@ from .rate_limiter import ProviderGuards
 from .router import ProviderDef, RouteDef, RoutePlanner, load_config
 from .types import ChatRequest, ProviderChatResponse, chat_response_from_provider
 
+logger = logging.getLogger(__name__)
+
 app = FastAPI(title="llm-orch")
 
 CONFIG_DIR = os.environ.get("ORCH_CONFIG_DIR", os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "config"))
 
 TRUTHY_VALUES: frozenset[str] = frozenset({"1", "true", "yes", "on"})
 FALSY_VALUES: frozenset[str] = frozenset({"0", "false", "no", "off"})
+
+
+class _ModelInfo(TypedDict):
+    id: str
+    object: Literal["model"]
+    owned_by: str
+
+
+class _ModelListResponse(TypedDict):
+    object: Literal["list"]
+    data: list[_ModelInfo]
 
 
 def _env_var_as_bool(name: str, *, default: bool = False) -> bool:
@@ -76,6 +93,56 @@ ALLOWED_ORIGINS = _parse_env_list(os.environ.get("ORCH_CORS_ALLOW_ORIGINS", ""))
 PROM_CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
 HISTOGRAM_BUCKETS: tuple[float, ...] = (0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0)
 
+logger = logging.getLogger(__name__)
+
+
+def _format_timestamp(value: float | None) -> str | None:
+    if value is None:
+        return None
+    return datetime.fromtimestamp(value, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _build_watch_files(
+    mtimes: dict[str, float], watch_paths: tuple[str, ...]
+) -> tuple[tuple[str, str], ...]:
+    keys = list(mtimes.keys())
+    entries: list[tuple[str, str]] = []
+    for index, path in enumerate(watch_paths):
+        name = keys[index] if index < len(keys) else f"path_{index}"
+        entries.append((name, path))
+    return tuple(entries)
+
+
+def _sanitize_watch_path(path: str) -> str:
+    try:
+        relative = os.path.relpath(path, CONFIG_DIR)
+    except ValueError:
+        relative = os.path.basename(path)
+    else:
+        if relative.startswith(".."):
+            relative = os.path.basename(path)
+    return relative.replace("\\", "/")
+
+
+def _planner_watch_summary(
+    watch_files: tuple[tuple[str, str], ...],
+    watch_mtimes: dict[str, float],
+) -> list[dict[str, Any]]:
+    summary: list[dict[str, Any]] = []
+    for name, raw_path in watch_files:
+        try:
+            current_mtime = os.stat(raw_path).st_mtime
+        except OSError:
+            current_mtime = watch_mtimes.get(name)
+        summary.append(
+            {
+                "name": name,
+                "path": _sanitize_watch_path(raw_path),
+                "last_modified_at": _format_timestamp(current_mtime),
+            }
+        )
+    return summary
+
 
 def _new_histogram_state() -> dict[str, Any]:
     return {"buckets": [0] * (len(HISTOGRAM_BUCKETS) + 1), "count": 0, "sum": 0.0}
@@ -85,6 +152,21 @@ PROM_COUNTER: defaultdict[tuple[str, str, str], int] = defaultdict(int)
 PROM_HISTOGRAM: defaultdict[tuple[str, str], dict[str, Any]] = defaultdict(
     _new_histogram_state
 )
+
+
+class ErrorCode(str, Enum):
+    INVALID_API_KEY = "invalid_api_key"
+    RATE_LIMIT = "rate_limit"
+    PROVIDER_ERROR = "provider_error"
+    PROVIDER_SERVER_ERROR = "provider_server_error"
+    ROUTING_ERROR = "routing_error"
+
+    @classmethod
+    def from_error_type(cls, error_type: str) -> "ErrorCode | None":
+        try:
+            return cls(error_type)
+        except ValueError:
+            return None
 
 
 class _AliasProviderMap(MutableMapping[str, Any]):
@@ -147,6 +229,20 @@ def _apply_provider_aliases(
     guard_registry.guards = _AliasProviderMap(guard_registry.guards, aliases)
 
 
+class ModelInfo(BaseModel):
+    id: str
+    object: Literal["model"] = "model"
+    owned_by: str
+    provider: str
+    model: str
+    aliases: list[str] | None = None
+
+
+class ModelListResponse(BaseModel):
+    object: Literal["list"] = "list"
+    data: list[ModelInfo]
+
+
 def _make_response_headers(*, req_id: str, provider: str | None, attempts: int) -> dict[str, str]:
     fallback_attempts = max(attempts - 1, 0)
     provider_value = provider or "unknown"
@@ -155,6 +251,22 @@ def _make_response_headers(*, req_id: str, provider: str | None, attempts: int) 
         "x-orch-provider": provider_value,
         "x-orch-fallback-attempts": str(fallback_attempts),
     }
+
+
+def _log_request_event(
+    level: int,
+    *,
+    event: str,
+    req_id: str,
+    provider: str | None,
+    attempts: int,
+    detail: str | None = None,
+) -> None:
+    provider_value = provider or "unknown"
+    message = f"{event} req_id={req_id} provider={provider_value} attempts={attempts}"
+    if detail:
+        message = f"{message} detail={detail}"
+    logger.log(level, message)
 
 
 def _estimate_text_tokens(text: str) -> int:
@@ -217,6 +329,11 @@ planner = RoutePlanner(
     use_dummy=USE_DUMMY,
     mtimes=cfg.mtimes,
 )
+planner_last_reload_at: float = time.time()
+planner_watch_mtimes: dict[str, float] = dict(cfg.mtimes)
+planner_watch_files: tuple[tuple[str, str], ...] = _build_watch_files(
+    planner_watch_mtimes, cfg.watch_paths
+)
 metrics = MetricsLogger(os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "metrics"))
 
 _config_refresh_task: asyncio.Task[None] | None = None
@@ -267,6 +384,7 @@ async def _stop_config_refresh() -> None:
 
 def reload_configuration() -> None:
     global cfg, providers, guards, planner
+    global planner_last_reload_at, planner_watch_mtimes, planner_watch_files
     new_cfg = load_config(CONFIG_DIR, use_dummy=USE_DUMMY)
     cfg = new_cfg
     providers = ProviderRegistry(new_cfg.providers)
@@ -279,6 +397,9 @@ def reload_configuration() -> None:
         use_dummy=USE_DUMMY,
         mtimes=new_cfg.mtimes,
     )
+    planner_last_reload_at = time.time()
+    planner_watch_mtimes = dict(new_cfg.mtimes)
+    planner_watch_files = _build_watch_files(planner_watch_mtimes, new_cfg.watch_paths)
 
 
 def _http_status_error_details(exc: httpx.HTTPStatusError) -> tuple[int | None, str]:
@@ -345,22 +466,36 @@ def _error_type_from_status(status: int | None) -> str:
     return "provider_error"
 
 
+def _resolve_error_code(
+    *, status_code: int, error_type: str, explicit: "ErrorCode | str | None"
+) -> str:
+    if explicit is not None:
+        if isinstance(explicit, ErrorCode):
+            return explicit.value
+        return str(explicit)
+    if status_code == 401:
+        return ErrorCode.INVALID_API_KEY.value
+    if status_code == 429:
+        return ErrorCode.RATE_LIMIT.value
+    if status_code >= 500:
+        return ErrorCode.PROVIDER_SERVER_ERROR.value
+    member = ErrorCode.from_error_type(error_type)
+    if member is not None:
+        return member.value
+    return error_type
+
+
 def _make_error_body(
     *,
     status_code: int,
     message: str,
     error_type: str,
     retry_after: int | None = None,
-    code: str | None = None,
+    code: "ErrorCode | str | None" = None,
 ) -> dict[str, Any]:
-    resolved_code = code
-    if resolved_code is None:
-        if status_code == 401:
-            resolved_code = "invalid_api_key"
-        elif status_code == 429:
-            resolved_code = "rate_limit"
-        else:
-            resolved_code = error_type
+    resolved_code = _resolve_error_code(
+        status_code=status_code, error_type=error_type, explicit=code
+    )
     payload: dict[str, Any] = {
         "message": message,
         "type": error_type,
@@ -373,6 +508,9 @@ def _make_error_body(
 
 def _require_api_key(req: Request) -> None:
     if not INBOUND_API_KEYS:
+        logger.warning(
+            "APIキー保護が無効: ORCH_INBOUND_API_KEYS が未設定"
+        )
         return
     candidate = req.headers.get(API_KEY_HEADER)
     if candidate is None:
@@ -437,14 +575,63 @@ MAX_PROVIDER_ATTEMPTS = 3
 BAD_GATEWAY_STATUS = 502
 STREAMING_UNSUPPORTED_ERROR = "streaming responses are not supported"
 
+
+@app.get("/v1/models", response_model=ModelListResponse)
+async def list_models() -> ModelListResponse:
+    alias_map = _build_alias_map(cfg.providers)
+    alias_groups: dict[str, list[str]] = {}
+    for alias, canonical in alias_map.items():
+        alias_groups.setdefault(canonical, []).append(alias)
+
+    models: list[ModelInfo] = []
+    for name, provider_def in sorted(cfg.providers.items()):
+        if name in alias_map:
+            continue
+        alias_list = sorted(alias_groups.get(name, ()))
+        models.append(
+            ModelInfo(
+                id=provider_def.model or name,
+                owned_by=provider_def.type,
+                provider=name,
+                model=provider_def.model,
+                aliases=alias_list or None,
+            )
+        )
+
+    return ModelListResponse(data=models)
+
+
 @app.get("/healthz")
-async def healthz():
-    return {"status": "ok", "providers": list(cfg.providers.keys())}
+async def healthz() -> dict[str, Any]:
+    planner_summary = {
+        "last_reload_at": _format_timestamp(planner_last_reload_at),
+        "watch": _planner_watch_summary(planner_watch_files, planner_watch_mtimes),
+    }
+    return {
+        "status": "ok",
+        "providers": list(cfg.providers.keys()),
+        "planner": planner_summary,
+    }
 
 @app.get("/metrics")
 async def metrics_endpoint(req: Request) -> Response:
     _require_api_key(req)
     return Response(_render_prometheus(), media_type=PROM_CONTENT_TYPE)
+
+
+@app.get("/v1/models")
+async def list_models() -> _ModelListResponse:
+    models: list[_ModelInfo] = []
+    for name, definition in sorted(cfg.providers.items()):
+        owner = definition.type or name
+        model_entry: _ModelInfo = {
+            "id": name,
+            "object": "model",
+            "owned_by": owner,
+        }
+        models.append(model_entry)
+    payload: _ModelListResponse = {"object": "list", "data": models}
+    return payload
 
 
 @app.post("/v1/chat/completions")
@@ -461,7 +648,7 @@ async def chat_completions(req: Request, body: ChatRequest):
             status_code=exc.status_code,
             message=detail,
             error_type="authentication_error",
-            code="invalid_api_key",
+            code=ErrorCode.INVALID_API_KEY,
         )
         return JSONResponse(error_body, status_code=exc.status_code, headers=headers)
     header_value = (
@@ -699,6 +886,17 @@ async def chat_completions(req: Request, body: ChatRequest):
 
     if success_response is not None and success_record is not None:
         await _log_metrics(success_record)
+        log_level = logging.WARNING if attempt_count > 1 else logging.INFO
+        event_name = (
+            "chat.completions fallback" if attempt_count > 1 else "chat.completions success"
+        )
+        _log_request_event(
+            log_level,
+            event=event_name,
+            req_id=req_id,
+            provider=last_provider,
+            attempts=attempt_count,
+        )
         headers = _make_response_headers(
             req_id=req_id, provider=last_provider, attempts=attempt_count
         )
@@ -737,6 +935,14 @@ async def chat_completions(req: Request, body: ChatRequest):
     if failure_retry_after is not None:
         failure_record["retry_after"] = failure_retry_after
     await _log_metrics(failure_record)
+    _log_request_event(
+        logging.ERROR,
+        event="chat.completions failure",
+        req_id=req_id,
+        provider=last_provider,
+        attempts=attempt_count,
+        detail=failure_error,
+    )
     error_body = _make_error_body(
         status_code=failure_status,
         message=failure_error,

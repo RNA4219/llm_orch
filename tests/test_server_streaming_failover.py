@@ -17,8 +17,8 @@ except ModuleNotFoundError:  # pragma: no cover - test fallback
         sys.path.insert(0, str(project_root))
     from src.orch.router import RouteDef, RouteTarget
 
-from tests.test_server_routes import load_app
-from tests.test_server_streaming_routing import (
+from tests.test_server_routes import load_app  # noqa: E402
+from tests.test_server_streaming_routing import (  # noqa: E402
     _DummyGuard,
     _Registry,
     _http_status_error,

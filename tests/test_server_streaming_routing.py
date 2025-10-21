@@ -15,7 +15,7 @@ except ModuleNotFoundError:  # pragma: no cover - test fallback
         sys.path.insert(0, str(project_root))
     from src.orch.router import RouteDef, RouteTarget
 
-from tests.test_server_routes import capture_metric_records, load_app
+from tests.test_server_routes import capture_metric_records, load_app  # noqa: E402
 
 
 def _http_status_error(status_code: int, *, message: str = "boom") -> httpx.HTTPStatusError:
