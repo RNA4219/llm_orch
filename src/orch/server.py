@@ -576,12 +576,11 @@ async def list_models() -> ModelListResponse:
 
     models: list[ModelInfo] = []
     for name, provider_def in sorted(cfg.providers.items()):
-        if name in alias_map:
-            continue
         alias_list = sorted(alias_groups.get(name, ()))
+        model_id = name if name in alias_map else provider_def.model or name
         models.append(
             ModelInfo(
-                id=provider_def.model or name,
+                id=model_id,
                 owned_by=provider_def.type,
                 provider=name,
                 model=provider_def.model,
