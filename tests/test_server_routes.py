@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
 from pathlib import Path
-from types import MethodType, SimpleNamespace
+from types import MethodType, ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, Mock
 
@@ -31,6 +31,17 @@ def load_app(dummy_env: str | None = None) -> FastAPI:
     if str(project_root) not in sys.path:
         sys.path.insert(0, str(project_root))
     importlib.invalidate_caches()
+
+    if "src.orch.providers.openai" not in sys.modules:
+        stub_module = ModuleType("src.orch.providers.openai")
+
+        class _StubOpenAICompatProvider:
+            def __init__(self, defn: Any) -> None:
+                self.defn = defn
+
+        stub_module.OpenAICompatProvider = _StubOpenAICompatProvider
+        sys.modules[stub_module.__name__] = stub_module
+
     module = importlib.import_module(module_name)
     return module.app
 
@@ -123,6 +134,14 @@ def test_models_endpoint_returns_expected_shape(route_test_config: Path) -> None
     assert dummy_entry["owned_by"] == "dummy"
     assert dummy_entry["model"] == "dummy"
     assert "dummy_alt" in dummy_entry.get("aliases", [])
+
+    dummy_alias_entry = next(
+        (item for item in payload["data"] if item["provider"] == "dummy_alt"),
+        None,
+    )
+    assert dummy_alias_entry is not None
+    assert dummy_alias_entry["id"] == "dummy_alt"
+    assert dummy_alias_entry["owned_by"] == "dummy"
 
 
 def test_route_planner_skips_provider_after_consecutive_failures(

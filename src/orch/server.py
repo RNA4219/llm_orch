@@ -618,17 +618,28 @@ async def list_models() -> ModelListResponse:
 
     models: list[ModelInfo] = []
     for name, provider_def in sorted(cfg.providers.items()):
-        alias_list = sorted(alias_groups.get(name, ()))
-        model_id = name if name in alias_map else provider_def.model or name
-        models.append(
-            ModelInfo(
-                id=model_id,
-                owned_by=provider_def.type,
-                provider=name,
-                model=provider_def.model,
-                aliases=alias_list or None,
+        canonical = alias_map.get(name)
+        if canonical is None:
+            alias_list = sorted(alias_groups.get(name, ()))
+            models.append(
+                ModelInfo(
+                    id=provider_def.model or name,
+                    owned_by=provider_def.type,
+                    provider=name,
+                    model=provider_def.model,
+                    aliases=alias_list or None,
+                )
             )
-        )
+        else:
+            models.append(
+                ModelInfo(
+                    id=name,
+                    owned_by=provider_def.type,
+                    provider=name,
+                    model=provider_def.model,
+                    aliases=None,
+                )
+            )
 
     return ModelListResponse(data=models)
 
