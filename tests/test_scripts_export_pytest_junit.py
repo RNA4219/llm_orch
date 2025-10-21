@@ -328,6 +328,16 @@ def test_convert_junit_to_jsonl_handles_nested_testsuites(tmp_path: Path) -> Non
     ]
 
 
+def test_convert_junit_to_jsonl_handles_missing_input(tmp_path: Path) -> None:
+    missing_xml = tmp_path / "pytest.xml"
+    output_path = tmp_path / "out.jsonl"
+
+    convert_junit_to_jsonl(missing_xml, output_path)
+
+    assert output_path.exists()
+    assert output_path.read_text(encoding="utf-8") == ""
+
+
 def test_convert_junit_to_jsonl_handles_default_namespace(tmp_path: Path) -> None:
     xml_path = tmp_path / "pytest.xml"
     output_path = tmp_path / "out.jsonl"
