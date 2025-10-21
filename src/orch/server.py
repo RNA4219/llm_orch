@@ -1,4 +1,5 @@
 import asyncio
+import builtins
 import inspect
 import json
 import logging
@@ -26,6 +27,25 @@ from .providers import ProviderRegistry, UnsupportedContentBlockError
 from .rate_limiter import ProviderGuards
 from .router import ProviderDef, RouteDef, RoutePlanner, load_config
 from .types import ChatRequest, ProviderChatResponse, chat_response_from_provider
+
+_BUILTIN_ANEXT = getattr(builtins, "anext", None)
+_MISSING = object()
+
+
+async def anext(iterator: AsyncIterator[Any], default: Any = _MISSING) -> Any:
+    """Await ``iterator.__anext__`` with optional default value support."""
+
+    if _BUILTIN_ANEXT is not None:
+        if default is _MISSING:
+            return await _BUILTIN_ANEXT(iterator)
+        return await _BUILTIN_ANEXT(iterator, default)
+
+    try:
+        return await iterator.__anext__()
+    except StopAsyncIteration:
+        if default is not _MISSING:
+            return default
+        raise
 
 logger = logging.getLogger(__name__)
 
