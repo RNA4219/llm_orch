@@ -4,13 +4,15 @@ import os
 from collections.abc import MutableMapping
 from dataclasses import asdict, dataclass
 from urllib.parse import urlparse, urlunparse
-from typing import Any, AsyncIterator, Dict, List, cast
+from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List
 
 import httpx
 
 from ..router import ProviderDef
 from ..types import ProviderChatResponse
-from .openai import OpenAICompatProvider
+
+if TYPE_CHECKING:
+    from .openai import OpenAICompatProvider
 
 # [ ] openai移行完了
 
