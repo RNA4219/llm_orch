@@ -7,7 +7,7 @@ import os
 import time
 import uuid
 from collections import defaultdict
-from collections.abc import AsyncIterator, Iterator, MutableMapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, MutableMapping
 from contextlib import asynccontextmanager
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
@@ -21,27 +21,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-try:  # Python 3.10+
-    from builtins import anext as _anext
-except ImportError:  # pragma: no cover - fallback for older Python versions
-    _anext = None
-
-
-if _anext is None:  # pragma: no cover - fallback retained for lint clarity
-    _ANEXT_MISSING = object()
-
-    async def anext(
-        iterator: AsyncIterator[Any],
-        default: object = _ANEXT_MISSING,
-    ) -> Any:
-        try:
-            return await iterator.__anext__()
-        except StopAsyncIteration:
-            if default is _ANEXT_MISSING:
-                raise
-            return default
-else:
-    anext = _anext
+_builtin_anext_raw = getattr(builtins, "anext", None)
+if _builtin_anext_raw is not None:
+    _builtin_anext: Callable[..., Awaitable[Any]] | None = cast(
+        Callable[..., Awaitable[Any]],
+        _builtin_anext_raw,
+    )
+else:  # pragma: no cover - fallback retained for clarity
+    _builtin_anext = None
 
 
 from .metrics import MetricsLogger
@@ -50,17 +37,16 @@ from .rate_limiter import GuardLease, ProviderGuards
 from .router import ProviderDef, RouteDef, RoutePlanner, load_config
 from .types import ChatRequest, ProviderChatResponse, chat_response_from_provider
 
-_BUILTIN_ANEXT = getattr(builtins, "anext", None)
 _MISSING = object()
 
 
 async def anext(iterator: AsyncIterator[Any], default: Any = _MISSING) -> Any:
     """Await ``iterator.__anext__`` with optional default value support."""
 
-    if _BUILTIN_ANEXT is not None:
+    if _builtin_anext is not None:
         if default is _MISSING:
-            return await _BUILTIN_ANEXT(iterator)
-        return await _BUILTIN_ANEXT(iterator, default)
+            return await _builtin_anext(iterator)
+        return await _builtin_anext(iterator, default)
 
     try:
         return await iterator.__anext__()
@@ -614,12 +600,12 @@ async def list_models() -> ModelListResponse:
     """Return configured providers with canonical ids, provider, model, and aliases."""
     alias_map = _build_alias_map(cfg.providers)
     alias_groups: dict[str, list[str]] = {}
-    for alias, canonical in alias_map.items():
-        alias_groups.setdefault(canonical, []).append(alias)
+    for alias, canonical_name in alias_map.items():
+        alias_groups.setdefault(canonical_name, []).append(alias)
 
     models: list[ModelInfo] = []
     for name, provider_def in sorted(cfg.providers.items()):
-        canonical = alias_map.get(name)
+        canonical: str | None = alias_map.get(name)
         if canonical is None:
             alias_list = sorted(alias_groups.get(name, ()))
             models.append(
