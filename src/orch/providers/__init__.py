@@ -13,6 +13,8 @@ from ..types import ProviderChatResponse
 
 if TYPE_CHECKING:
     from .openai import OpenAICompatProvider as _OpenAICompatProvider
+
+    OpenAICompatProvider = _OpenAICompatProvider
 # [ ] openai移行完了
 
 
