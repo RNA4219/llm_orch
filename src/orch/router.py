@@ -1,7 +1,6 @@
 import importlib
 import os
 import random
-import sys
 import time
 import warnings
 from dataclasses import dataclass, field
@@ -17,9 +16,9 @@ from pydantic import (
     model_validator,
 )
 
-if sys.version_info >= (3, 11):  # pragma: no cover - exercised via tests
+try:  # pragma: no cover - exercised via tests
     import tomllib
-else:  # pragma: no cover - exercised via tests
+except ModuleNotFoundError:  # pragma: no cover - exercised via tests
     tomllib = cast(Any, importlib.import_module("tomli"))
 
 yaml = cast(Any, importlib.import_module("yaml"))
