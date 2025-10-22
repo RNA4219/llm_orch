@@ -21,6 +21,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
+from .metrics import MetricsLogger
+from .providers import ProviderRegistry, UnsupportedContentBlockError
+from .rate_limiter import GuardLease, ProviderGuards
+from .router import ProviderDef, RouteDef, RoutePlanner, load_config
+from .types import ChatRequest, ProviderChatResponse, chat_response_from_provider
+
 _builtin_anext_raw = getattr(builtins, "anext", None)
 if _builtin_anext_raw is not None:
     _builtin_anext: Callable[..., Awaitable[Any]] | None = cast(
@@ -29,13 +35,6 @@ if _builtin_anext_raw is not None:
     )
 else:  # pragma: no cover - fallback retained for clarity
     _builtin_anext = None
-
-
-from .metrics import MetricsLogger
-from .providers import ProviderRegistry, UnsupportedContentBlockError
-from .rate_limiter import GuardLease, ProviderGuards
-from .router import ProviderDef, RouteDef, RoutePlanner, load_config
-from .types import ChatRequest, ProviderChatResponse, chat_response_from_provider
 
 _MISSING = object()
 

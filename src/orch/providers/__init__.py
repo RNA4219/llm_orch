@@ -12,7 +12,7 @@ from ..router import ProviderDef
 from ..types import ProviderChatResponse
 
 if TYPE_CHECKING:
-    from .openai import OpenAICompatProvider as _OpenAICompatProvider
+    from .openai import OpenAICompatProvider
 # [ ] openai移行完了
 
 
