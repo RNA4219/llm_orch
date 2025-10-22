@@ -2,7 +2,7 @@
 
 すべての notable な変更はこのファイルに記録されます。
 
-## Unreleased
+## v0.1.1 - 2024-10-05
 
 - `requirements.txt` の `ruff` / `mypy` の重複行を整理し、CI 用ツールとして単一バージョン（`ruff==0.6.9`, `mypy==1.13.0`）に固定。
 
