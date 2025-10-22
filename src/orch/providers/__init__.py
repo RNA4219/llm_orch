@@ -12,7 +12,7 @@ from ..router import ProviderDef
 from ..types import ProviderChatResponse
 
 if TYPE_CHECKING:
-    from .openai import OpenAICompatProvider as _OpenAICompatProvider
+    from .openai import OpenAICompatProvider as _OpenAICompatProvider  # noqa: F401
 # [ ] openai移行完了
 
 
@@ -914,7 +914,7 @@ class DummyProvider(BaseProvider):
 
 
 _openai_module = importlib.import_module(".openai", __name__)
-OpenAICompatProvider = cast(
+OpenAICompatProvider: type[BaseProvider] = cast(
     type[BaseProvider], _openai_module.OpenAICompatProvider
 )
 
