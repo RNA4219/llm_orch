@@ -18,3 +18,12 @@ def test_make_error_body_preserves_client_errors() -> None:
         error_type="provider_error",
     )
     assert body["error"]["message"] == message
+
+
+def test_make_error_body_strips_stack_trace_from_client_errors() -> None:
+    body = orch_server._make_error_body(
+        status_code=400,
+        message="Traceback (most recent call last):\nValueError: bad",
+        error_type="provider_error",
+    )
+    assert body["error"]["message"] == "Traceback (most recent call last):"

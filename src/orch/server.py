@@ -511,7 +511,9 @@ def _public_error_message(*, message: str, status_code: int, error_type: str) ->
     sanitized = message.strip()
     if status_code >= 500:
         return _GENERIC_INTERNAL_ERROR_MESSAGE
-    return sanitized or message
+    if not sanitized:
+        return message
+    return sanitized.splitlines()[0]
 
 
 def _make_error_body(
