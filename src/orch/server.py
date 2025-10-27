@@ -503,6 +503,17 @@ def _resolve_error_code(
     return error_type
 
 
+_GENERIC_INTERNAL_ERROR_MESSAGE = "internal server error"
+
+
+def _public_error_message(*, message: str, status_code: int, error_type: str) -> str:
+    _ = error_type
+    sanitized = message.strip()
+    if status_code >= 500:
+        return _GENERIC_INTERNAL_ERROR_MESSAGE
+    return sanitized or message
+
+
 def _make_error_body(
     *,
     status_code: int,
@@ -511,11 +522,14 @@ def _make_error_body(
     retry_after: int | None = None,
     code: "ErrorCode | str | None" = None,
 ) -> dict[str, Any]:
+    public_message = _public_error_message(
+        message=message, status_code=status_code, error_type=error_type
+    )
     resolved_code = _resolve_error_code(
         status_code=status_code, error_type=error_type, explicit=code
     )
     payload: dict[str, Any] = {
-        "message": message,
+        "message": public_message,
         "type": error_type,
         "code": resolved_code,
     }
