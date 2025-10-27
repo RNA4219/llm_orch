@@ -408,10 +408,10 @@ def test_chat_uses_guard_estimates_and_records_usage(
             lease = self._lease
 
             class FakeGuardContext:
-                async def __aenter__(self_nonlocal) -> object:
+                async def __aenter__(self) -> object:
                     return lease
 
-                async def __aexit__(self_nonlocal, exc_type, exc, tb) -> None:
+                async def __aexit__(self, exc_type, exc, tb) -> None:
                     return None
 
             return FakeGuardContext()
