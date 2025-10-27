@@ -513,7 +513,10 @@ def _public_error_message(*, message: str, status_code: int, error_type: str) ->
         return _GENERIC_INTERNAL_ERROR_MESSAGE
     if not sanitized:
         return message
-    return sanitized.splitlines()[0]
+    first_line = sanitized.splitlines()[0]
+    if "traceback (most recent call last)" in first_line.casefold():
+        return _GENERIC_INTERNAL_ERROR_MESSAGE
+    return first_line
 
 
 def _make_error_body(

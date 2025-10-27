@@ -26,4 +26,4 @@ def test_make_error_body_strips_stack_trace_from_client_errors() -> None:
         message="Traceback (most recent call last):\nValueError: bad",
         error_type="provider_error",
     )
-    assert body["error"]["message"] == "Traceback (most recent call last):"
+    assert body["error"]["message"] == "internal server error"
