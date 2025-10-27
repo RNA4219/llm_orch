@@ -104,6 +104,18 @@ def test_openai_base_url_uses_chat_completions(monkeypatch: pytest.MonkeyPatch) 
     assert post_calls[0]["url"] == "https://api.openai.com/v1/chat/completions"
 
 
+def test_similar_domain_is_not_treated_as_openai_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "secret")
+    provider = make_provider("https://fooopenai.com")
+
+    post_calls, _ = run_chat(provider, monkeypatch)
+
+    assert post_calls
+    assert post_calls[0]["url"] == "https://fooopenai.com/chat/completions"
+
+
 def test_openai_preserves_existing_chat_completions_suffix(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
