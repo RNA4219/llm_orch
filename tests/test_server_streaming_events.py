@@ -7,14 +7,11 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, AsyncIterator, Callable
+from typing import Any, AsyncIterator, Callable
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
-
-if TYPE_CHECKING:
-    from src.orch.types import ProviderStreamChunk
 
 StreamFn = Callable[..., AsyncIterator[Any]]
 
