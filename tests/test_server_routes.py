@@ -579,10 +579,10 @@ def test_chat_records_planner_failure_on_guarded_errors(
             lease = object()
 
             class _Context:
-                async def __aenter__(self_inner) -> object:
+                async def __aenter__(self) -> object:
                     return lease
 
-                async def __aexit__(self_inner, exc_type, exc, tb) -> None:
+                async def __aexit__(self, exc_type, exc, tb) -> None:
                     return None
 
             return _Context()
