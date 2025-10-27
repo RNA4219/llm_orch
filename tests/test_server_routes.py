@@ -2026,9 +2026,7 @@ def test_chat_missing_route_and_default_returns_400(route_test_config: Path) -> 
         },
     )
     assert response.status_code == 400
-    assert response.json()["error"]["message"] == (
-        "no route configured for task 'IDEATE' and no DEFAULT route defined in router configuration."
-    )
+    assert response.json()["error"]["message"] == "routing unavailable"
 
 
 def test_chat_missing_header_uses_default_task(route_test_config: Path) -> None:
@@ -2488,9 +2486,7 @@ routes:
         },
     )
     assert failure.status_code == 400
-    assert failure.json()["error"]["message"] == (
-        "no route configured for task 'DEFAULT' and no DEFAULT route defined in router configuration."
-    )
+    assert failure.json()["error"]["message"] == "routing unavailable"
 
 
 def test_chat_metrics_success_includes_req_id(

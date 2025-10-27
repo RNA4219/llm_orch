@@ -751,6 +751,7 @@ async def chat_completions(req: Request, body: ChatRequest) -> Response:
             route = plan_fn(task)
     except ValueError as exc:
         detail = str(exc) or "routing unavailable"
+        user_message = "routing unavailable"
         await _log_metrics({
             "req_id": req_id,
             "ts": time.time(),
@@ -768,7 +769,7 @@ async def chat_completions(req: Request, body: ChatRequest) -> Response:
         headers = _make_response_headers(req_id=req_id, provider=None, attempts=0)
         error_body = _make_error_body(
             status_code=400,
-            message=detail,
+            message=user_message,
             error_type="routing_error",
         )
         return JSONResponse(error_body, status_code=400, headers=headers)
