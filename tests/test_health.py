@@ -127,4 +127,4 @@ routes:
         message = payload["detail"]
     else:
         message = payload.get("error", {}).get("message", "")
-    assert "no route configured" in message
+    assert message == "routing unavailable"
