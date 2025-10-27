@@ -167,7 +167,6 @@ def test_route_planner_skips_provider_after_consecutive_failures(
 def test_route_planner_circuit_resets_after_recovery(
     route_test_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from importlib import import_module
 
     ensure_project_root_on_path()
     from src.orch.router import RoutePlanner, load_config
@@ -175,7 +174,7 @@ def test_route_planner_circuit_resets_after_recovery(
     loaded = load_config(str(route_test_config), use_dummy=True)
     planner = RoutePlanner(loaded.router, loaded.providers)
 
-    router_module = import_module("src.orch.router")
+    router_module = importlib.import_module("src.orch.router")
 
     current_time = [100.0]
 
