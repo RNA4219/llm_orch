@@ -55,6 +55,10 @@ spec:
 {{- with .Values.resources }}
           resources:
 {{ toYaml . | indent 12 }}
+{{- else }}
+          resources:
+            limits:
+              memory: "512Mi"
 {{- end }}
       volumes:
         - name: config
