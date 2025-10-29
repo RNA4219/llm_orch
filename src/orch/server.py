@@ -1487,12 +1487,15 @@ async def _stream_chat_response(
             finally:
                 if not producer_task.done():
                     producer_task.cancel()
+                cancelled_error: asyncio.CancelledError | None = None
                 try:
                     await producer_task
-                except asyncio.CancelledError:
-                    pass
+                except asyncio.CancelledError as exc:
+                    cancelled_error = exc
                 except Exception:
                     pass
+                if cancelled_error is not None:
+                    raise cancelled_error
 
         response = StreamingResponse(event_source(), media_type="text/event-stream")
         response.headers.update(

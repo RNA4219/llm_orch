@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
 import json
 import os
@@ -8,12 +9,20 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, AsyncIterator, Callable
+from unittest.mock import AsyncMock
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
+from starlette.requests import Request
 
 StreamFn = Callable[..., AsyncIterator[Any]]
+
+
+@pytest.fixture(scope="module")
+def anyio_backend() -> str:
+    return "asyncio"
 
 
 def load_app(dummy_env: str | None = None) -> FastAPI:
@@ -210,3 +219,116 @@ def test_streaming_emits_without_guard(monkeypatch: MonkeyPatch) -> None:
     assert events[-1] == (None, "[DONE]")
     named = [name for name, _ in events if name]
     assert named[0] == "chat.completion.chunk"
+
+
+@pytest.mark.anyio
+async def test_streaming_cleanup_reraises_cancelled_error(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    ensure_project_root_on_path()
+    load_app("1")
+    server_module = sys.modules["src.orch.server"]
+
+    from src.orch.router import RouteDef, RouteTarget
+    from src.orch.types import ChatMessage, ChatRequest, ProviderStreamChunk
+
+    model_name = "mock-provider"
+
+    cancel_blocker = asyncio.Event()
+
+    async def _stream(*_args: Any, **_kwargs: Any) -> AsyncIterator[ProviderStreamChunk]:
+        yield ProviderStreamChunk(event_type="delta", delta={"content": "hi"})
+        await cancel_blocker.wait()
+
+    class _Guard:
+        async def __aenter__(self) -> None:  # pragma: no cover - trivial context manager
+            return None
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:  # pragma: no cover - trivial context manager
+            return None
+
+    class _Registry:
+        def __init__(self, mapping: dict[str, Any]) -> None:
+            self._mapping = mapping
+
+        def get(self, key: str) -> Any:
+            return self._mapping[key]
+
+    route = RouteDef(
+        name="PLAN",
+        strategy="priority",
+        targets=[RouteTarget(provider=model_name)],
+    ).ordered([model_name])
+
+    planner_stub = SimpleNamespace(
+        plan=lambda _task, *, sticky_key=None: route,
+        record_success=lambda *_args, **_kwargs: None,
+        record_failure=lambda *_args, **_kwargs: None,
+    )
+
+    monkeypatch.setattr(server_module, "planner", planner_stub, raising=False)
+    monkeypatch.setattr(
+        server_module,
+        "providers",
+        _Registry({model_name: SimpleNamespace(model=model_name, chat_stream=staticmethod(_stream))}),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        server_module,
+        "guards",
+        _Registry({model_name: _Guard()}),
+        raising=False,
+    )
+    monkeypatch.setattr(server_module.metrics, "write", AsyncMock(), raising=False)
+
+    captured_response: dict[str, Any] = {}
+
+    class _CapturingStreamingResponse:
+        def __init__(self, iterable: AsyncIterator[bytes], media_type: str) -> None:
+            captured_response["iterable"] = iterable
+            self.iterable = iterable
+            self.media_type = media_type
+            self.headers: dict[str, str] = {}
+
+    monkeypatch.setattr(
+        server_module,
+        "StreamingResponse",
+        _CapturingStreamingResponse,
+        raising=False,
+    )
+
+    async def _receive() -> dict[str, Any]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    request = Request(
+        {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "method": "POST",
+            "path": "/v1/chat/completions",
+            "raw_path": b"/v1/chat/completions",
+            "headers": [],
+            "query_string": b"",
+            "client": ("testclient", 0),
+            "server": ("testserver", 80),
+            "scheme": "http",
+        },
+        _receive,
+    )
+
+    body = ChatRequest(
+        model=model_name,
+        messages=[ChatMessage(role="user", content="hi")],
+        stream=True,
+    )
+
+    await server_module.chat_completions(request, body)
+    iterable = captured_response["iterable"]
+
+    chunk = await iterable.__anext__()
+    assert b"data:" in chunk
+
+    with pytest.raises(asyncio.CancelledError):
+        await iterable.aclose()
+
+    cancel_blocker.set()
