@@ -240,12 +240,15 @@ class MetricsLogger:
     def _file(self) -> str:
         return os.path.join(self.dir, f"requests-{time.strftime('%Y%m%d')}.jsonl")
 
+    def _write_record_sync(self, record: dict[str, Any]) -> None:
+        with open(self._file(), "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
     async def write(self, record: dict[str, Any]) -> None:
         if self._lock is None:
             self._lock = asyncio.Lock()
         async with self._lock:
-            with open(self._file(), "a", encoding="utf-8") as handle:
-                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+            await asyncio.to_thread(self._write_record_sync, record)
         otel = self._otel or self._ensure_otel(self._mode)
         if otel is not None:
             otel.record(record)
