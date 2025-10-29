@@ -5,7 +5,7 @@ import pathlib
 import shutil
 import statistics
 from collections import Counter
-from typing import Sequence
+from typing import Iterable, Sequence
 
 LOG = pathlib.Path("logs/test.jsonl")
 REPORT = pathlib.Path("reports/today.md")
@@ -91,19 +91,24 @@ def compute_p95(durations: Sequence[object]) -> int:
         index = min(sample_count - 1, math.ceil(0.95 * sample_count) - 1)
         return int(sorted_durations[index])
 
-def main():
-    tests, durs, fails = load_results()
-    total = len(tests)
+def _format_pass_rate(total: int, fail_count: int) -> str:
     if total == 0:
-        pass_rate_text = "未実行"
-    else:
-        pass_rate = (total - len(fails)) / total
-        pass_rate_text = f"{pass_rate:.2%}"
-    p95 = compute_p95(durs)
-    now = datetime.datetime.utcnow().isoformat()
-    REPORT.parent.mkdir(parents=True, exist_ok=True)
-    with REPORT.open("w", encoding="utf-8") as f:
-        f.write(f"# Reflection Report ({now})\n\n")
+        return "未実行"
+    pass_rate = (total - fail_count) / total
+    return f"{pass_rate:.2%}"
+
+
+def _write_report(
+    report_path: pathlib.Path,
+    total: int,
+    pass_rate_text: str,
+    p95: int,
+    fails: Sequence[object],
+    timestamp: str,
+) -> None:
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    with report_path.open("w", encoding="utf-8") as f:
+        f.write(f"# Reflection Report ({timestamp})\n\n")
         f.write(f"- Total tests: {total}\n")
         f.write(f"- Pass rate: {pass_rate_text}\n")
         f.write(f"- Duration p95: {p95} ms\n")
@@ -112,19 +117,39 @@ def main():
             f.write("## Why-Why (draft)\n")
             for name, cnt in Counter(fails).items():
                 f.write(f"- {name}: 仮説=前処理の不安定/依存の競合/境界値不足\n")
-    if fails:
-        with ISSUE_OUT.open("w", encoding="utf-8") as f:
-            f.write("### 反省TODO\n")
-            for name in set(fails):
-                f.write(f"- [ ] {name} の再現手順/前提/境界値を追加\n")
-    else:
-        if ISSUE_OUT.exists():
-            if ISSUE_OUT.is_file() or ISSUE_OUT.is_symlink():
-                try:
-                    ISSUE_OUT.unlink()
-                except OSError:
-                    ISSUE_OUT.write_text("", encoding="utf-8")
-            else:
-                shutil.rmtree(ISSUE_OUT)
+
+
+def _remove_issue_output(issue_path: pathlib.Path) -> None:
+    if not issue_path.exists():
+        return
+    if issue_path.is_file() or issue_path.is_symlink():
+        try:
+            issue_path.unlink()
+        except OSError:
+            issue_path.write_text("", encoding="utf-8")
+        return
+    shutil.rmtree(issue_path)
+
+
+def _write_issue_suggestions(issue_path: pathlib.Path, fails: Iterable[object]) -> None:
+    failures = list(fails)
+    if not failures:
+        _remove_issue_output(issue_path)
+        return
+    issue_path.parent.mkdir(parents=True, exist_ok=True)
+    with issue_path.open("w", encoding="utf-8") as f:
+        f.write("### 反省TODO\n")
+        for name in set(failures):
+            f.write(f"- [ ] {name} の再現手順/前提/境界値を追加\n")
+
+
+def main():
+    tests, durs, fails = load_results()
+    total = len(tests)
+    pass_rate_text = _format_pass_rate(total, len(fails))
+    p95 = compute_p95(durs)
+    now = datetime.datetime.utcnow().isoformat()
+    _write_report(REPORT, total, pass_rate_text, p95, fails, now)
+    _write_issue_suggestions(ISSUE_OUT, fails)
 if __name__ == "__main__":
     main()
