@@ -273,157 +273,233 @@ class AnthropicProvider(BaseProvider):
         _ = presence_penalty
         _ = logit_bias
         _ = response_format
-        base = self.defn.base_url.strip()
-        parsed = urlparse(base)
-        path = parsed.path or ""
-        path_segments = [segment for segment in path.split("/") if segment]
 
-        def is_version_segment(segment: str) -> bool:
-            if not segment:
-                return False
-            lowered = segment.lower()
-            if not lowered.startswith("v"):
-                return False
-            suffix = lowered[1:]
-            return bool(suffix) and suffix[0].isdigit()
-
-        normalized_segments = list(path_segments)
-        has_version_segment = any(is_version_segment(segment) for segment in normalized_segments)
-
-        if normalized_segments:
-            ends_with_messages = normalized_segments[-1].lower() == "messages"
-            if not has_version_segment:
-                insert_index = len(normalized_segments) - 1 if ends_with_messages else len(normalized_segments)
-                normalized_segments.insert(insert_index, "v1")
-            if not ends_with_messages:
-                normalized_segments.append("messages")
-        else:
-            normalized_segments = ["v1", "messages"]
-
-        normalized_path = "/" + "/".join(normalized_segments)
-        url = urlunparse(parsed._replace(path=normalized_path))
-        headers: dict[str, str] = {
-            "anthropic-version": "2023-06-01",
-            "Content-Type": "application/json",
-        }
-        auth_env = self.defn.auth_env
-        if auth_env:
-            raw_key = os.environ.get(auth_env)
-            if raw_key:
-                key = raw_key.strip()
-                if key:
-                    headers["x-api-key"] = key
-        system_messages: list[str] = []
-        mapped: list[dict[str, Any]] = []
-        function_call_counter = 0
-        for message in messages:
-            role = message.get("role")
-            if role == "system":
-                if "content" not in message:
-                    raise ValueError("Anthropic system messages must include 'content'.")
-                system_messages.append(self._normalize_text_content(message["content"]))
-                continue
-            if role == "tool":
-                mapped.append(
-                    {
-                        "role": "user",
-                        "content": [self._map_tool_result(message)],
-                    }
-                )
-                continue
-            if role not in ("user", "assistant"):
-                continue
-            content_blocks: list[dict[str, Any]] = []
-            if "content" in message:
-                text_content = self._normalize_text_content(message["content"])
-                if text_content:
-                    content_blocks.append({"type": "text", "text": text_content})
-            tool_calls = message.get("tool_calls")
-            if tool_calls:
-                if not isinstance(tool_calls, list):
-                    raise ValueError("Anthropic tool calls must be provided as a list.")
-                for tool_call in tool_calls:
-                    content_blocks.append(self._map_tool_call(tool_call))
-            function_call_field = message.get("function_call")
-            if function_call_field is not None:
-                if not isinstance(function_call_field, dict):
-                    raise ValueError("Anthropic function_call must be provided as a dictionary.")
-                function_call_counter += 1
-                identifier_candidate = function_call_field.get("id")
-                identifier: str | None
-                if isinstance(identifier_candidate, str) and identifier_candidate:
-                    identifier = identifier_candidate
-                else:
-                    message_identifier = message.get("id")
-                    if isinstance(message_identifier, str) and message_identifier:
-                        identifier = message_identifier
-                    else:
-                        identifier = f"function_call_{function_call_counter}"
-                synthetic_tool_call = {
-                    "id": identifier,
-                    "type": "function",
-                    "function": dict(function_call_field),
-                }
-                content_blocks.append(self._map_tool_call(synthetic_tool_call))
-            if not content_blocks:
-                content_blocks.append({"type": "text", "text": ""})
-            mapped.append({"role": role, "content": content_blocks})
-        function_call_mode: str | None
-        if isinstance(function_call, str):
-            function_call_mode = function_call
-        else:
-            function_call_mode = None
-
-        disable_tools = function_call_mode == "none"
+        url = self._build_request_url()
+        headers = self._build_request_headers()
+        system_messages, mapped_messages = self._map_request_messages(messages)
 
         payload: dict[str, Any] = {
             "model": self.defn.model or model,
             "max_output_tokens": max_tokens,
             "temperature": temperature,
-            "messages": mapped,
+            "messages": mapped_messages,
             "stream": stream,
         }
+
         if system_messages:
             payload["system"] = "\n\n".join(system_messages)
+
+        disable_tools, normalized_tool_choice = self._resolve_tool_choice(tool_choice, function_call)
+
         if tools is not None and not disable_tools:
             payload["tools"] = _normalize_anthropic_tools(tools)
-
-        normalized_tool_choice: dict[str, Any] | str | None = None
-        if disable_tools:
-            normalized_tool_choice = "none"
-        elif tool_choice is not None:
-            if isinstance(tool_choice, str):
-                normalized_tool_choice = tool_choice
-            elif isinstance(tool_choice, dict):
-                normalized_tool_choice = _normalize_anthropic_tool_choice(tool_choice)
-            else:
-                raise ValueError("Anthropic tool_choice must be a string or dictionary.")
-        elif isinstance(function_call, dict):
-            name_candidate = function_call.get("name")
-            if isinstance(name_candidate, str) and name_candidate:
-                normalized_tool_choice = _normalize_anthropic_tool_choice(
-                    {"type": "function", "function": {"name": name_candidate}}
-                )
-        elif function_call_mode is not None:
-            normalized_tool_choice = function_call_mode
-
         if normalized_tool_choice is not None:
             payload["tool_choice"] = normalized_tool_choice
-        cleaned_extra_options = dict(extra_options or {})
+
+        cleaned_extra_options, effective_top_p = self._clean_sampling_options(
+            extra_options or {}, top_p
+        )
+
+        if effective_top_p is not None:
+            payload["top_p"] = effective_top_p
+
+        self._merge_extra_options(payload, cleaned_extra_options)
+        return url, headers, payload
+
+    def _build_request_url(self) -> str:
+        base = self.defn.base_url.strip()
+        parsed = urlparse(base)
+        path = parsed.path or ""
+        segments = [segment for segment in path.split("/") if segment]
+        normalized_segments = self._normalize_path_segments(segments)
+        normalized_path = "/" + "/".join(normalized_segments)
+        return urlunparse(parsed._replace(path=normalized_path))
+
+    def _build_request_headers(self) -> dict[str, str]:
+        headers: dict[str, str] = {
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        }
+        auth_env = self.defn.auth_env
+        if not auth_env:
+            return headers
+        raw_key = os.environ.get(auth_env)
+        if not raw_key:
+            return headers
+        key = raw_key.strip()
+        if key:
+            headers["x-api-key"] = key
+        return headers
+
+    def _normalize_path_segments(self, segments: list[str]) -> list[str]:
+        if not segments:
+            return ["v1", "messages"]
+        normalized = list(segments)
+        if not any(self._is_version_segment(segment) for segment in normalized):
+            insert_index = self._version_insert_index(normalized)
+            normalized.insert(insert_index, "v1")
+        if normalized[-1].lower() != "messages":
+            normalized.append("messages")
+        return normalized
+
+    @staticmethod
+    def _is_version_segment(segment: str) -> bool:
+        if not segment:
+            return False
+        lowered = segment.lower()
+        if not lowered.startswith("v"):
+            return False
+        suffix = lowered[1:]
+        return bool(suffix) and suffix[0].isdigit()
+
+    @staticmethod
+    def _version_insert_index(segments: list[str]) -> int:
+        if segments[-1].lower() == "messages":
+            return len(segments) - 1
+        return len(segments)
+
+    def _map_request_messages(
+        self, messages: List[dict[str, Any]]
+    ) -> tuple[list[str], list[dict[str, Any]]]:
+        system_messages: list[str] = []
+        mapped_messages: list[dict[str, Any]] = []
+        function_call_counter = 0
+
+        for message in messages:
+            role = message.get("role")
+            if role == "system":
+                system_messages.append(self._normalize_system_message(message))
+                continue
+            if role == "tool":
+                mapped_messages.append(self._map_tool_message(message))
+                continue
+            if role not in ("user", "assistant"):
+                continue
+            content_blocks, function_call_counter = self._build_content_blocks(
+                message, function_call_counter
+            )
+            mapped_messages.append({"role": role, "content": content_blocks})
+
+        return system_messages, mapped_messages
+
+    def _normalize_system_message(self, message: dict[str, Any]) -> str:
+        if "content" not in message:
+            raise ValueError("Anthropic system messages must include 'content'.")
+        return self._normalize_text_content(message["content"])
+
+    def _map_tool_message(self, message: dict[str, Any]) -> dict[str, Any]:
+        return {"role": "user", "content": [self._map_tool_result(message)]}
+
+    def _build_content_blocks(
+        self, message: dict[str, Any], function_call_counter: int
+    ) -> tuple[list[dict[str, Any]], int]:
+        blocks: list[dict[str, Any]] = []
+        text_block = self._build_text_block(message)
+        if text_block is not None:
+            blocks.append(text_block)
+
+        blocks.extend(self._map_message_tool_calls(message))
+
+        function_block, updated_counter = self._map_message_function_call(
+            message, function_call_counter
+        )
+        if function_block is not None:
+            blocks.append(function_block)
+
+        if not blocks:
+            blocks.append({"type": "text", "text": ""})
+
+        return blocks, updated_counter
+
+    def _build_text_block(self, message: dict[str, Any]) -> dict[str, Any] | None:
+        if "content" not in message:
+            return None
+        text_content = self._normalize_text_content(message["content"])
+        if not text_content:
+            return None
+        return {"type": "text", "text": text_content}
+
+    def _map_message_tool_calls(self, message: dict[str, Any]) -> list[dict[str, Any]]:
+        tool_calls = message.get("tool_calls")
+        if not tool_calls:
+            return []
+        if not isinstance(tool_calls, list):
+            raise ValueError("Anthropic tool calls must be provided as a list.")
+        return [self._map_tool_call(tool_call) for tool_call in tool_calls]
+
+    def _map_message_function_call(
+        self, message: dict[str, Any], counter: int
+    ) -> tuple[dict[str, Any] | None, int]:
+        function_call_field = message.get("function_call")
+        if function_call_field is None:
+            return None, counter
+        if not isinstance(function_call_field, dict):
+            raise ValueError("Anthropic function_call must be provided as a dictionary.")
+
+        counter += 1
+        identifier = self._resolve_function_call_id(message, function_call_field, counter)
+        synthetic_tool_call = {
+            "id": identifier,
+            "type": "function",
+            "function": dict(function_call_field),
+        }
+        return self._map_tool_call(synthetic_tool_call), counter
+
+    @staticmethod
+    def _resolve_function_call_id(
+        message: dict[str, Any], function_call_field: dict[str, Any], counter: int
+    ) -> str:
+        identifier_candidate = function_call_field.get("id")
+        if isinstance(identifier_candidate, str) and identifier_candidate:
+            return identifier_candidate
+        message_identifier = message.get("id")
+        if isinstance(message_identifier, str) and message_identifier:
+            return message_identifier
+        return f"function_call_{counter}"
+
+    def _resolve_tool_choice(
+        self,
+        tool_choice: dict[str, Any] | str | None,
+        function_call: dict[str, Any] | str | None,
+    ) -> tuple[bool, dict[str, Any] | str | None]:
+        function_call_mode = function_call if isinstance(function_call, str) else None
+        disable_tools = function_call_mode == "none"
+
+        if disable_tools:
+            return True, "none"
+
+        if isinstance(tool_choice, str):
+            return False, tool_choice
+        if isinstance(tool_choice, dict):
+            return False, _normalize_anthropic_tool_choice(tool_choice)
+        if tool_choice is not None:
+            raise ValueError("Anthropic tool_choice must be a string or dictionary.")
+        if isinstance(function_call, dict):
+            name_candidate = function_call.get("name")
+            if isinstance(name_candidate, str) and name_candidate:
+                normalized = _normalize_anthropic_tool_choice(
+                    {"type": "function", "function": {"name": name_candidate}}
+                )
+                return False, normalized
+        if function_call_mode is not None:
+            return False, function_call_mode
+        return False, None
+
+    @staticmethod
+    def _clean_sampling_options(
+        extra_options: dict[str, Any], top_p: float | None
+    ) -> tuple[dict[str, Any], float | None]:
+        cleaned_extra_options = dict(extra_options)
         extra_top_p = cleaned_extra_options.pop("top_p", None)
-        unsupported_option_names = (
+        for option_name in (
             "frequency_penalty",
             "presence_penalty",
             "logit_bias",
             "response_format",
-        )
-        for option_name in unsupported_option_names:
+        ):
             cleaned_extra_options.pop(option_name, None)
         effective_top_p = top_p if top_p is not None else extra_top_p
-        if effective_top_p is not None:
-            payload["top_p"] = effective_top_p
-        self._merge_extra_options(payload, cleaned_extra_options)
-        return url, headers, payload
+        return cleaned_extra_options, effective_top_p
 
     @staticmethod
     def _map_stop_reason(raw: str | None) -> str | None:
