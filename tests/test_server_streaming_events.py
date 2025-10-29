@@ -322,10 +322,10 @@ async def test_streaming_cleanup_reraises_cancelled_error(
         stream=True,
     )
 
-    response = await server_module.chat_completions(request, body)
+    await server_module.chat_completions(request, body)
     iterable = captured_response["iterable"]
 
-    chunk = await anext(iterable)
+    chunk = await iterable.__anext__()
     assert b"data:" in chunk
 
     with pytest.raises(asyncio.CancelledError):
