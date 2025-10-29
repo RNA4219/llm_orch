@@ -395,6 +395,10 @@ async def _stop_config_refresh() -> None:
     task.cancel()
     try:
         await task
+    except asyncio.CancelledError:
+        current = asyncio.current_task()
+        if current is not None and current.cancelling():
+            raise
     finally:
         _config_refresh_task = None
 
