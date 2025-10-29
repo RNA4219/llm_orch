@@ -91,40 +91,67 @@ def compute_p95(durations: Sequence[object]) -> int:
         index = min(sample_count - 1, math.ceil(0.95 * sample_count) - 1)
         return int(sorted_durations[index])
 
-def main():
+def _compute_pass_rate_text(total_tests: int, failure_count: int) -> str:
+    if total_tests == 0:
+        return "未実行"
+    pass_rate = (total_tests - failure_count) / total_tests
+    return f"{pass_rate:.2%}"
+
+
+def _write_report(
+    report_path: pathlib.Path,
+    total_tests: int,
+    pass_rate_text: str,
+    duration_p95: int,
+    failures: Sequence[object],
+    timestamp: str,
+) -> None:
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    with report_path.open("w", encoding="utf-8") as handle:
+        handle.write(f"# Reflection Report ({timestamp})\n\n")
+        handle.write(f"- Total tests: {total_tests}\n")
+        handle.write(f"- Pass rate: {pass_rate_text}\n")
+        handle.write(f"- Duration p95: {duration_p95} ms\n")
+        handle.write(f"- Failures: {len(failures)}\n\n")
+        if failures:
+            handle.write("## Why-Why (draft)\n")
+            for name in Counter(failures):
+                handle.write(
+                    f"- {name}: 仮説=前処理の不安定/依存の競合/境界値不足\n"
+                )
+
+
+def _remove_issue_output(path: pathlib.Path) -> None:
+    if not path.exists():
+        return
+    if path.is_file() or path.is_symlink():
+        try:
+            path.unlink()
+        except OSError:
+            path.write_text("", encoding="utf-8")
+        return
+    shutil.rmtree(path)
+
+
+def _write_issue_suggestions(path: pathlib.Path, failures: Sequence[object]) -> None:
+    if not failures:
+        _remove_issue_output(path)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        handle.write("### 反省TODO\n")
+        for name in set(failures):
+            handle.write(f"- [ ] {name} の再現手順/前提/境界値を追加\n")
+
+
+def main() -> None:
     tests, durs, fails = load_results()
-    total = len(tests)
-    if total == 0:
-        pass_rate_text = "未実行"
-    else:
-        pass_rate = (total - len(fails)) / total
-        pass_rate_text = f"{pass_rate:.2%}"
+    total_tests = len(tests)
+    pass_rate_text = _compute_pass_rate_text(total_tests, len(fails))
     p95 = compute_p95(durs)
-    now = datetime.datetime.utcnow().isoformat()
-    REPORT.parent.mkdir(parents=True, exist_ok=True)
-    with REPORT.open("w", encoding="utf-8") as f:
-        f.write(f"# Reflection Report ({now})\n\n")
-        f.write(f"- Total tests: {total}\n")
-        f.write(f"- Pass rate: {pass_rate_text}\n")
-        f.write(f"- Duration p95: {p95} ms\n")
-        f.write(f"- Failures: {len(fails)}\n\n")
-        if fails:
-            f.write("## Why-Why (draft)\n")
-            for name, cnt in Counter(fails).items():
-                f.write(f"- {name}: 仮説=前処理の不安定/依存の競合/境界値不足\n")
-    if fails:
-        with ISSUE_OUT.open("w", encoding="utf-8") as f:
-            f.write("### 反省TODO\n")
-            for name in set(fails):
-                f.write(f"- [ ] {name} の再現手順/前提/境界値を追加\n")
-    else:
-        if ISSUE_OUT.exists():
-            if ISSUE_OUT.is_file() or ISSUE_OUT.is_symlink():
-                try:
-                    ISSUE_OUT.unlink()
-                except OSError:
-                    ISSUE_OUT.write_text("", encoding="utf-8")
-            else:
-                shutil.rmtree(ISSUE_OUT)
+    timestamp = datetime.datetime.utcnow().isoformat()
+
+    _write_report(REPORT, total_tests, pass_rate_text, p95, fails, timestamp)
+    _write_issue_suggestions(ISSUE_OUT, fails)
 if __name__ == "__main__":
     main()
