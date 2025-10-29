@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import importlib
 import sys
 import time
@@ -13,6 +14,11 @@ from fastapi.testclient import TestClient
 from tests.test_server_routes import ensure_project_root_on_path, load_app
 
 from src.orch.types import ProviderChatResponse
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"
 
 
 def test_config_refresh_loop_runs_and_stops(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -57,6 +63,85 @@ def test_config_refresh_loop_runs_and_stops(tmp_path: Path, monkeypatch: pytest.
     time.sleep(0.05)
     assert len(refresh_calls) == expected_calls
     assert task.cancelled()
+
+
+@pytest.mark.anyio
+async def test_stop_config_refresh_swallows_task_cancellation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, anyio_backend: str
+) -> None:
+    _ = anyio_backend
+    ensure_project_root_on_path()
+    (tmp_path / "providers.dummy.toml").write_text(
+        "[dummy]\ntype = \"dummy\"\nmodel = \"dummy\"\n"
+    )
+    (tmp_path / "router.yaml").write_text(
+        "defaults:\n  temperature: 0.2\nroutes:\n  PLAN:\n    primary: dummy\n"
+    )
+    monkeypatch.setenv("ORCH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("ORCH_USE_DUMMY", "1")
+    monkeypatch.setenv("ORCH_CONFIG_REFRESH_INTERVAL", "0.01")
+
+    sys.modules.pop("src.orch.server", None)
+    sys.modules.pop("src.orch", None)
+    importlib.invalidate_caches()
+    server_module = importlib.import_module("src.orch.server")
+
+    monkeypatch.setattr(server_module.planner, "refresh", lambda: False)
+
+    try:
+        await server_module._start_config_refresh()
+        task = server_module._config_refresh_task
+        assert task is not None
+        await asyncio.sleep(0)
+        await server_module._stop_config_refresh()
+        assert task.cancelled()
+    finally:
+        task = server_module._config_refresh_task
+        if task is not None and not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        server_module._config_refresh_task = None
+
+
+@pytest.mark.anyio
+async def test_stop_config_refresh_reraises_when_cancelled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, anyio_backend: str
+) -> None:
+    _ = anyio_backend
+    ensure_project_root_on_path()
+    (tmp_path / "providers.dummy.toml").write_text(
+        "[dummy]\ntype = \"dummy\"\nmodel = \"dummy\"\n"
+    )
+    (tmp_path / "router.yaml").write_text(
+        "defaults:\n  temperature: 0.2\nroutes:\n  PLAN:\n    primary: dummy\n"
+    )
+    monkeypatch.setenv("ORCH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("ORCH_USE_DUMMY", "1")
+    monkeypatch.setenv("ORCH_CONFIG_REFRESH_INTERVAL", "0.01")
+
+    sys.modules.pop("src.orch.server", None)
+    sys.modules.pop("src.orch", None)
+    importlib.invalidate_caches()
+    server_module = importlib.import_module("src.orch.server")
+
+    monkeypatch.setattr(server_module.planner, "refresh", lambda: False)
+
+    try:
+        await server_module._start_config_refresh()
+        stop_coro = server_module._stop_config_refresh()
+        stop_task = asyncio.create_task(stop_coro)
+        await asyncio.sleep(0)
+        stop_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await stop_task
+    finally:
+        task = server_module._config_refresh_task
+        if task is not None and not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        server_module._config_refresh_task = None
 
 
 def test_reload_configuration_replaces_runtime_state(
