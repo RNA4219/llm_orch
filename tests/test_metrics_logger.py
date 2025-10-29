@@ -1,5 +1,6 @@
 """MetricsLogger OpenTelemetry integration tests."""
 
+import asyncio
 import sys
 import types
 from pathlib import Path
@@ -278,3 +279,24 @@ async def test_metrics_logger_otel_only_mode(tmp_path, monkeypatch):
     finally:
         MetricsLogger.configure_metric_reader(None)
         monkeypatch.delenv("ORCH_METRICS_EXPORT_MODE", raising=False)
+
+
+@pytest.mark.anyio
+async def test_metrics_logger_write_uses_async_file_io(tmp_path, monkeypatch):
+    monkeypatch.delenv("ORCH_OTEL_METRICS_EXPORT", raising=False)
+    monkeypatch.setenv("ORCH_METRICS_EXPORT_MODE", "prom")
+    MetricsLogger.configure_metric_reader(None)
+
+    logger = MetricsLogger(str(tmp_path))
+    calls: list[tuple[Any, tuple[Any, ...], dict[str, Any]]] = []
+
+    async def fake_to_thread(func: Any, /, *args: Any, **kwargs: Any) -> Any:
+        calls.append((func, args, kwargs))
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
+
+    record = _sample_record()
+    await logger.write(record)
+
+    assert calls, "write() must delegate file IO to asyncio.to_thread"
