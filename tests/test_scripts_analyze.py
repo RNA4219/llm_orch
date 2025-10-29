@@ -1,3 +1,4 @@
+import datetime
 import json
 
 import scripts.analyze as analyze
@@ -169,6 +170,40 @@ def test_analyze_handles_invalid_json_line(tmp_path, monkeypatch):
 
     report_text = report_path.read_text(encoding="utf-8")
     assert "- Total tests: 2" in report_text
+
+
+def test_analyze_main_uses_timezone_aware_timestamp(tmp_path, monkeypatch):
+    log_path = tmp_path / "logs" / "test.jsonl"
+    report_path = tmp_path / "reports" / "today.md"
+    issue_path = tmp_path / "reports" / "issue_suggestions.md"
+
+    log_path.parent.mkdir(parents=True)
+    report_path.parent.mkdir(parents=True)
+
+    log_path.write_text(
+        json.dumps({"name": "sample::good_one", "duration_ms": 10, "status": "pass"})
+        + "\n",
+        encoding="utf-8",
+    )
+
+    class _DummyDatetime(datetime.datetime):  # type: ignore[misc]
+        called_with = None
+
+        @classmethod
+        def now(cls, tz=None):  # type: ignore[override]
+            cls.called_with = tz
+            return cls(2024, 1, 2, 3, 4, 5, tzinfo=tz)
+
+    monkeypatch.setattr(analyze, "LOG", log_path)
+    monkeypatch.setattr(analyze, "REPORT", report_path)
+    monkeypatch.setattr(analyze, "ISSUE_OUT", issue_path)
+    monkeypatch.setattr(analyze.datetime, "datetime", _DummyDatetime)
+
+    analyze.main()
+
+    report_text = report_path.read_text(encoding="utf-8")
+    assert _DummyDatetime.called_with is analyze.datetime.timezone.utc
+    assert "+00:00" in report_text.splitlines()[0]
 
 
 def test_analyze_main_skip_only_counts_as_not_run(tmp_path, monkeypatch):
