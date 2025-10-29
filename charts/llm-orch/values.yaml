@@ -5,6 +5,12 @@ image:
 
 replicaCount: 1
 
+serviceAccount:
+  create: true
+  name: ""
+  automount: false
+  annotations: {}
+
 service:
   type: ClusterIP
   port: 8000
