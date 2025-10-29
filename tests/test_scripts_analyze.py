@@ -361,3 +361,28 @@ def test_analyze_main_removes_stale_issue_suggestions(tmp_path, monkeypatch):
         assert issue_path.read_text(encoding="utf-8") == ""
     else:
         assert not issue_path.exists()
+
+
+def test_analyze_main_removes_issue_directory_when_no_failures(tmp_path, monkeypatch):
+    log_path = tmp_path / "logs" / "test.jsonl"
+    report_path = tmp_path / "reports" / "today.md"
+    issue_path = tmp_path / "reports" / "issue_suggestions.md"
+
+    log_path.parent.mkdir(parents=True)
+    report_path.parent.mkdir(parents=True)
+
+    record = {"name": "sample::solo", "duration_ms": 5, "status": "pass"}
+    with log_path.open("w", encoding="utf-8") as fp:
+        fp.write(json.dumps(record) + "\n")
+
+    issue_dir = issue_path.with_suffix("")
+    issue_dir.mkdir(parents=True)
+    (issue_dir / "stale.txt").write_text("stale", encoding="utf-8")
+
+    monkeypatch.setattr(analyze, "LOG", log_path)
+    monkeypatch.setattr(analyze, "REPORT", report_path)
+    monkeypatch.setattr(analyze, "ISSUE_OUT", issue_dir)
+
+    analyze.main()
+
+    assert not issue_dir.exists()
