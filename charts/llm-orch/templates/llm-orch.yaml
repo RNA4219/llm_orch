@@ -53,14 +53,14 @@ spec:
             - name: config
               mountPath: /config
               readOnly: true
-{{- with .Values.resources }}
-          resources:
-{{ toYaml . | indent 12 }}
-{{- else }}
-          resources:
-            limits:
-              memory: "512Mi"
+{{- $resources := deepCopy (default (dict) .Values.resources) }}
+{{- if not (hasKey $resources "limits") }}
+{{- $_ := set $resources "limits" (dict "memory" "512Mi") }}
+{{- else if not (hasKey (index $resources "limits") "memory") }}
+{{- $_ := set (index $resources "limits") "memory" "512Mi" }}
 {{- end }}
+          resources:
+{{ toYaml $resources | indent 12 }}
       volumes:
         - name: config
           configMap:
