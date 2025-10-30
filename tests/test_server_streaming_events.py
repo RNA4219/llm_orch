@@ -16,6 +16,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
 from starlette.requests import Request
+from starlette.responses import StreamingResponse
 
 StreamFn = Callable[..., AsyncIterator[Any]]
 
@@ -197,6 +198,103 @@ def test_streaming_done_emitted_once_for_empty_stream(monkeypatch: MonkeyPatch) 
     events = _collect_sse_events(monkeypatch, _stream)
 
     assert events == [(None, "[DONE]")]
+
+
+@pytest.mark.anyio
+async def test_streaming_cleanup_reraises_cancelled_error_on_pending_chunk(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    ensure_project_root_on_path()
+    from src.orch.types import ChatMessage, ChatRequest, ProviderStreamChunk
+
+    app = load_app("1")
+    server_module = sys.modules["src.orch.server"]
+
+    ready = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def _stream(*_args: Any, **_kwargs: Any) -> AsyncIterator[ProviderStreamChunk]:
+        yield ProviderStreamChunk(event_type="delta", delta={"content": "hi"})
+        ready.set()
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    model_name = "mock-provider"
+
+    class _Guard:
+        async def __aenter__(self) -> None:  # pragma: no cover - trivial context manager
+            return None
+
+        async def __aexit__(
+            self,
+            _exc_type: type[BaseException] | None,
+            _exc: BaseException | None,
+            _tb: Any,
+        ) -> None:  # pragma: no cover - trivial context manager
+            return None
+
+    class _Planner(SimpleNamespace):
+        def plan(self, _task: str, *, sticky_key: str | None = None) -> SimpleNamespace:
+            return SimpleNamespace(primary=model_name, fallback=[])
+
+    class _Providers:
+        def get(self, key: str) -> Any:
+            assert key == model_name
+            return SimpleNamespace(model=model_name, chat_stream=staticmethod(_stream))
+
+    class _Guards:
+        def get(self, key: str) -> _Guard:
+            assert key == model_name
+            return _Guard()
+
+    planner_stub = _Planner(
+        record_success=lambda _provider: None,
+        record_failure=lambda _provider: None,
+    )
+
+    monkeypatch.setattr(server_module, "planner", planner_stub, raising=False)
+    monkeypatch.setattr(server_module, "providers", _Providers(), raising=False)
+    monkeypatch.setattr(server_module, "guards", _Guards(), raising=False)
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "headers": [],
+        "query_string": b"",
+        "client": None,
+        "app": app,
+    }
+
+    async def _receive() -> dict[str, Any]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    request = Request(scope, _receive)
+    body = ChatRequest(
+        model=model_name,
+        messages=[ChatMessage(role="user", content="hi")],
+        stream=True,
+    )
+
+    response = await server_module.chat_completions(request, body)
+    assert isinstance(response, StreamingResponse)
+
+    stream_iter = response.body_iterator
+    first_chunk = await stream_iter.__anext__()
+    assert isinstance(first_chunk, (bytes, bytearray))
+    await ready.wait()
+
+    pending_task = asyncio.create_task(stream_iter.__anext__())
+    await asyncio.sleep(0)
+    pending_task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await pending_task
+
+    await asyncio.wait_for(cancelled.wait(), timeout=1)
 
 
 def test_streaming_emits_without_guard(monkeypatch: MonkeyPatch) -> None:
