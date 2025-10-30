@@ -99,6 +99,48 @@ async def _collect_stream_chunks(
     return chunks
 
 
+def test_anthropic_normalize_stream_events(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = build_anthropic_provider(monkeypatch)
+
+    events = [
+        {"type": "message_start", "message": {}},
+        {
+            "type": "content_block_delta",
+            "index": 1,
+            "delta": {"type": "text_delta", "text": "Hello"},
+        },
+        {
+            "type": "message_delta",
+            "delta": {
+                "stop_reason": "max_tokens",
+                "usage": {"input_tokens": 3, "output_tokens": 5},
+            },
+        },
+        {"type": "message_stop"},
+        {
+            "type": "error",
+            "error": {"type": "overloaded"},
+            "retry_after": 1,
+        },
+    ]
+
+    chunks = asyncio.run(_collect_stream_chunks(provider, events))
+
+    assert [chunk.event_type for chunk in chunks] == [
+        "message_start",
+        "delta",
+        "usage",
+        "message_stop",
+        "error",
+    ]
+    assert chunks[0].delta == {"role": "assistant"}
+    assert chunks[1].index == 1
+    assert chunks[1].delta == {"content": "Hello"}
+    assert chunks[2].usage == {"input_tokens": 3, "output_tokens": 5}
+    assert chunks[3].finish_reason == "length"
+    assert chunks[4].error == {"type": "overloaded", "retry_after": 1.0}
+
+
 def test_anthropic_chat_stream_uses_normalizer(monkeypatch: pytest.MonkeyPatch) -> None:
     provider = build_anthropic_provider(monkeypatch)
 

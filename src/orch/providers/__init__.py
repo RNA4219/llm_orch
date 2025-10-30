@@ -4,7 +4,7 @@ import os
 from collections.abc import MutableMapping
 from dataclasses import asdict, dataclass
 from urllib.parse import urlparse, urlunparse
-from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, cast
+from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Iterable, List, cast
 
 import httpx
 
@@ -30,6 +30,11 @@ class ProviderStreamChunk:
     usage: dict[str, int] | None = None
     error: dict[str, Any] | None = None
     raw: dict[str, Any] | None = None
+
+
+@dataclass(slots=True)
+class _AnthropicStreamState:
+    stop_reason: str | None = None
 
 def _normalize_anthropic_tool(tool: dict[str, Any]) -> dict[str, Any]:
     tool_type = tool.get("type")
@@ -516,85 +521,132 @@ class AnthropicProvider(BaseProvider):
     async def _normalize_stream_events(
         self, events: AsyncIterator[dict[str, Any]]
     ) -> AsyncIterator[ProviderStreamChunk]:
-        stop_reason: str | None = None
+        state = _AnthropicStreamState()
         async for event in events:
-            event_type = event.get("type")
-            if not isinstance(event_type, str):
+            event_type = self._extract_event_type(event)
+            if event_type is None:
                 continue
-            if event_type == "message_start":
-                stop_reason = None
-                message = event.get("message")
-                role = "assistant"
-                if isinstance(message, dict):
-                    raw_role = message.get("role")
-                    if isinstance(raw_role, str) and raw_role:
-                        role = raw_role
-                yield ProviderStreamChunk(
-                    event_type="message_start",
-                    delta={"role": role},
-                    raw=event,
-                )
-                continue
-            if event_type == "content_block_delta":
-                index_value = event.get("index")
-                block_delta = event.get("delta")
-                if not isinstance(block_delta, dict):
-                    continue
-                delta_type = block_delta.get("type")
-                if delta_type == "text_delta":
-                    text_value = block_delta.get("text")
-                    if isinstance(text_value, str) and text_value:
-                        normalized_index = index_value if isinstance(index_value, int) else 0
-                        yield ProviderStreamChunk(
-                            event_type="delta",
-                            index=normalized_index,
-                            delta={"content": text_value},
-                            raw=event,
-                        )
-                continue
-            if event_type == "message_delta":
-                delta_payload = event.get("delta")
-                if not isinstance(delta_payload, dict):
-                    continue
-                stop_candidate = delta_payload.get("stop_reason")
-                if isinstance(stop_candidate, str):
-                    stop_reason = stop_candidate
-                usage_payload = delta_payload.get("usage")
-                if isinstance(usage_payload, dict):
-                    usage: dict[str, int] = {}
-                    prompt_tokens = usage_payload.get("input_tokens")
-                    completion_tokens = usage_payload.get("output_tokens")
-                    if isinstance(prompt_tokens, int):
-                        usage["input_tokens"] = prompt_tokens
-                    if isinstance(completion_tokens, int):
-                        usage["output_tokens"] = completion_tokens
-                    if usage:
-                        yield ProviderStreamChunk(
-                            event_type="usage",
-                            usage=usage,
-                            raw=event,
-                        )
-                continue
-            if event_type == "message_stop":
-                yield ProviderStreamChunk(
-                    event_type="message_stop",
-                    finish_reason=self._map_stop_reason(stop_reason),
-                    raw=event,
-                )
-                stop_reason = None
-                continue
-            if event_type == "error":
-                error_info = event.get("error")
-                error_payload = dict(error_info) if isinstance(error_info, dict) else {}
-                retry_after = event.get("retry_after")
-                if isinstance(retry_after, (int, float)):
-                    error_payload.setdefault("retry_after", float(retry_after))
-                yield ProviderStreamChunk(
-                    event_type="error",
-                    error=error_payload or None,
-                    raw=event,
-                )
-                continue
+            for chunk in self._iter_stream_chunks(event_type, event, state):
+                yield chunk
+
+    @staticmethod
+    def _extract_event_type(event: dict[str, Any]) -> str | None:
+        event_type = event.get("type")
+        return event_type if isinstance(event_type, str) else None
+
+    def _iter_stream_chunks(
+        self,
+        event_type: str,
+        event: dict[str, Any],
+        state: _AnthropicStreamState,
+    ) -> Iterable[ProviderStreamChunk]:
+        if event_type == "message_start":
+            return self._handle_message_start_event(event, state)
+        if event_type == "content_block_delta":
+            return self._handle_content_block_delta_event(event)
+        if event_type == "message_delta":
+            return self._handle_message_delta_event(event, state)
+        if event_type == "message_stop":
+            return self._handle_message_stop_event(event, state)
+        if event_type == "error":
+            return self._handle_error_event(event)
+        return ()
+
+    def _handle_message_start_event(
+        self, event: dict[str, Any], state: _AnthropicStreamState
+    ) -> Iterable[ProviderStreamChunk]:
+        state.stop_reason = None
+        message = event.get("message")
+        role = "assistant"
+        if isinstance(message, dict):
+            raw_role = message.get("role")
+            if isinstance(raw_role, str) and raw_role:
+                role = raw_role
+        return (
+            ProviderStreamChunk(
+                event_type="message_start",
+                delta={"role": role},
+                raw=event,
+            ),
+        )
+
+    def _handle_content_block_delta_event(
+        self, event: dict[str, Any]
+    ) -> Iterable[ProviderStreamChunk]:
+        block_delta = event.get("delta")
+        if not isinstance(block_delta, dict):
+            return ()
+        if block_delta.get("type") != "text_delta":
+            return ()
+        text_value = block_delta.get("text")
+        if not isinstance(text_value, str) or not text_value:
+            return ()
+        index_value = event.get("index")
+        normalized_index = index_value if isinstance(index_value, int) else 0
+        return (
+            ProviderStreamChunk(
+                event_type="delta",
+                index=normalized_index,
+                delta={"content": text_value},
+                raw=event,
+            ),
+        )
+
+    def _handle_message_delta_event(
+        self, event: dict[str, Any], state: _AnthropicStreamState
+    ) -> Iterable[ProviderStreamChunk]:
+        delta_payload = event.get("delta")
+        if not isinstance(delta_payload, dict):
+            return ()
+        stop_candidate = delta_payload.get("stop_reason")
+        if isinstance(stop_candidate, str):
+            state.stop_reason = stop_candidate
+        usage_payload = delta_payload.get("usage")
+        if not isinstance(usage_payload, dict):
+            return ()
+        usage: dict[str, int] = {}
+        prompt_tokens = usage_payload.get("input_tokens")
+        if isinstance(prompt_tokens, int):
+            usage["input_tokens"] = prompt_tokens
+        completion_tokens = usage_payload.get("output_tokens")
+        if isinstance(completion_tokens, int):
+            usage["output_tokens"] = completion_tokens
+        if not usage:
+            return ()
+        return (
+            ProviderStreamChunk(
+                event_type="usage",
+                usage=usage,
+                raw=event,
+            ),
+        )
+
+    def _handle_message_stop_event(
+        self, event: dict[str, Any], state: _AnthropicStreamState
+    ) -> Iterable[ProviderStreamChunk]:
+        chunk = ProviderStreamChunk(
+            event_type="message_stop",
+            finish_reason=self._map_stop_reason(state.stop_reason),
+            raw=event,
+        )
+        state.stop_reason = None
+        return (chunk,)
+
+    def _handle_error_event(
+        self, event: dict[str, Any]
+    ) -> Iterable[ProviderStreamChunk]:
+        error_info = event.get("error")
+        error_payload = dict(error_info) if isinstance(error_info, dict) else {}
+        retry_after = event.get("retry_after")
+        if isinstance(retry_after, (int, float)):
+            error_payload.setdefault("retry_after", float(retry_after))
+        return (
+            ProviderStreamChunk(
+                event_type="error",
+                error=error_payload or None,
+                raw=event,
+            ),
+        )
 
     async def chat(
         self,
