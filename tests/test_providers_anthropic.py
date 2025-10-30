@@ -483,6 +483,26 @@ def test_anthropic_payload_maps_function_call_message(
     ]
 
 
+def test_anthropic_payload_includes_placeholder_for_empty_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = build_anthropic_provider(monkeypatch)
+
+    messages = [{"role": "user"}]
+
+    captured, _ = run_chat(provider, monkeypatch, messages)
+
+    request_json = cast(dict[str, Any], captured["json"])
+    anthropic_messages = cast(list[dict[str, Any]], request_json["messages"])
+
+    assert anthropic_messages == [
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": ""}],
+        }
+    ]
+
+
 def test_anthropic_payload_maps_tool_messages_text_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
