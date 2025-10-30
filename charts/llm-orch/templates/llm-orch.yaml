@@ -1,6 +1,13 @@
 {{- $name := default .Chart.Name .Values.nameOverride -}}
 {{- $fullname := default (printf "%s-%s" .Release.Name $name) .Values.fullnameOverride -}}
 {{- $labels := dict "app.kubernetes.io/name" $name "app.kubernetes.io/instance" .Release.Name "app.kubernetes.io/version" .Chart.AppVersion "app.kubernetes.io/component" "server" "app.kubernetes.io/managed-by" "Helm" -}}
+{{- $serviceAccount := default (dict) .Values.serviceAccount -}}
+{{- $serviceAccountCreate := default true $serviceAccount.create -}}
+{{- if and (not $serviceAccountCreate) (not $serviceAccount.name) -}}
+{{- fail "serviceAccount.name must be set when serviceAccount.create is false" -}}
+{{- end -}}
+{{- $serviceAccountName := default (printf "%s-sa" $fullname) $serviceAccount.name -}}
+{{- $automount := default false $serviceAccount.automount -}}
 
 apiVersion: v1
 kind: ConfigMap
@@ -38,7 +45,8 @@ spec:
         app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
         app.kubernetes.io/component: "server"
     spec:
-      automountServiceAccountToken: false
+      serviceAccountName: {{ $serviceAccountName | trunc 63 | trimSuffix "-" }}
+      automountServiceAccountToken: {{ $automount }}
       containers:
         - name: {{ $name | quote }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
