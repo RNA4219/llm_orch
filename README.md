@@ -1,3 +1,37 @@
+## Status / このリポジトリについて
+
+このリポジトリ（`llm_orch`）は、**「自前で OpenAI 互換の LLM ゲートウェイを書けるか？」を試すための個人実験プロジェクト**として作成したものです。
+
+- OpenAI 互換の `/v1/chat/completions` エンドポイント
+- SSE ストリーミング
+- 複数プロバイダへのルーティング（weighted / priority / sticky）
+- RPM / TPM / 同時実行数のガード、エラー時のフォールバック
+- メトリクス出力（Prometheus / OpenTelemetry）  
+  …などを「自作でどこまで作れるか」を検証する目的で実装していました。
+
+しかし、**実運用・今後の開発では自作実装ではなく LiteLLM を使う方針に切り替えた**ため、このリポジトリはアーカイブ（保守停止）とします。
+
+### なぜ LiteLLM に移行したか
+
+LiteLLM は、すでにコミュニティで広く使われている **オープンソースの LLM Gateway / Proxy** で、
+
+- OpenAI 互換の API で 100+ の LLM プロバイダを扱える
+- Proxy サーバとして、ルーティング / ロードバランシング / フォールバック / レート制限 / 予算管理 / ログ・メトリクス などが一通り揃っている
+- 自前で似た仕組みを維持するよりも、ノウハウのある OSS に乗った方が合理的
+
+という理由から、今後は **「LiteLLM Proxy + OpenRouter」構成で運用する**ことにしました。
+
+### 今後このリポジトリを見る人へ（Future me 含む）
+
+- このコードは「LLM ゲートウェイを自作してみた記録」です。
+- 新しく何かを作るときは、まずは LiteLLM の利用を検討してください。
+- このリポジトリ自体は **アーカイブ済み・非推奨** です（バグ修正や機能追加の予定はありません）。
+
+参考リンク:
+
+- LiteLLM GitHub: https://github.com/BerriAI/litellm  
+- LiteLLM Docs (Proxy/Gateway): https://docs.litellm.ai/docs/simple_proxy
+
 # llm-orch
 
 OpenAI互換 `/v1/chat/completions` を受け付ける**薄いオーケストレーター**。**SSEストリーミング、weighted/priority/sticky ルーティング、RPM/TPM/並列制御、429/5xx再試行、フォールバック、Prometheus/OpenTelemetry メトリクス、APIキー/CORS、ホットリロード**に対応しています。
