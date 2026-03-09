@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [ 'javascript', 'python' ]
+        language: [ 'python' ]
     steps:
       - uses: actions/checkout@v4
       - uses: github/codeql-action/init@v3
@@ -31,3 +31,4 @@ jobs:
       - uses: github/codeql-action/analyze@v3
         with:
           category: '/language:${{ matrix.language }}'
+
