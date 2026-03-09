@@ -1,10 +1,19 @@
-# リリースノート運用ガイド
+# リリースノート
 
-Conventional Commits に基づき、リリース前に以下の手順で CHANGELOG と VERSION を更新します。
+## v0.2.0 - 2026-03-09
 
-1. `VERSION` の SemVer をインクリメントし、`MAJOR.MINOR.PATCH` 形式を維持する。
-2. `CHANGELOG.md` に `## vMAJOR.MINOR.PATCH - YYYY-MM-DD` 見出しを追加し、主な変更点を箇条書きで記載する。
-3. コミットメッセージは Conventional Commits (`feat:`, `fix:`, `chore:` など) を遵守する。
-4. リリースノートを PR 説明と同期し、必要に応じて docs 配下の関連資料も更新する。
+このバージョンを `llm_orch` の**機能凍結リリース**とする。
 
-テストとリリース工程は `tools/ci/smoke.sh` を含む既存の CI スクリプトで検証し、失敗時は速やかに修正すること。
+### このリリースで締めた項目
+
+- OpenTelemetry メトリクスの `otel` / `both` モードを安定化。
+- Windows 上のガバナンスポリシー読込互換性を修正。
+- README / CHANGELOG / VERSION の整合を取り、現状実装と運用前提を同期。
+
+### 出荷判定
+
+- `pytest -q` が全件成功すること。
+- `tools/ci/smoke.sh` と Docker スモークが必要に応じて再確認されていること。
+- `VERSION`、`CHANGELOG.md`、本ファイルの内容が一致していること。
+- 以後は原則として不具合修正のみを受け付け、機能追加は行わないこと。
+

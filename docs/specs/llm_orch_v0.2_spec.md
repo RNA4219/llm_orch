@@ -7,7 +7,7 @@
 - `stream:true` の SSE は `_stream_chat_response` で FastAPI の `StreamingResponse` を用いて提供し、プロバイダ別ストリームを正規化しつつフェイルオーバ通知を送出する（`src/orch/server.py`）。
 - 応答は OpenAI 形式で返却し、`/healthz` と JSONL ログに加えて Prometheus `/metrics` で主要指標を公開する（`src/orch/server.py` の `_render_prometheus`）。
 - リクエスト処理フロー：`POST /v1/chat/completions` → ルーティング (`RoutePlanner`) → レート / 並列 / TPM 制御 → プロバイダ呼び出しとフォールバック → OpenAI 形式応答 / SSE ストリーム → JSONL メトリクス・Prometheus 反映。
-- 現状の制限 (MVP)：OpenTelemetry 連携は未着手。設定ファイルのホットリロードは未対応。TPM ガードは推定トークンに依存し、`usage` が欠落するプロバイダでは保守的なスロットリングが発生する。
+- 現状の制限: TPM ガードは推定トークンに依存し、`usage` が欠落するプロバイダでは保守的なスロットリングが発生する。Grafana など外部ダッシュボード整備は別途運用タスクとして扱う。
 
 ## 次段階仕様書 (v0.2 Next Stage)
 
@@ -31,6 +31,7 @@
 
 ### 未完了
 
-- [ ] OpenTelemetry など外部トレースシステムへの出力。
-- [ ] 設定ファイル (`providers.toml` / `router.yaml`) のホットリロードおよび再読み込み通知。
+- [x] OpenTelemetry メトリクス出力。
+- [x] 設定ファイル (`providers.toml` / `router.yaml`) のホットリロード。
 - [ ] ダッシュボード整備（Grafana 等）と TPM の実測値表示。
+

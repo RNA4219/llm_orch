@@ -140,23 +140,20 @@ class _PromMetrics:
 
 
 class _OtelMetrics:
-    __slots__ = ("_reader", "_previous_provider", "_provider", "_requests_counter", "_latency_histogram", "_shutdown")
+    __slots__ = ("_reader", "_provider", "_requests_counter", "_latency_histogram", "_shutdown")
 
     def __init__(self, reader: Optional["MetricReader"] = None):
-        from opentelemetry import metrics as otel_metrics  # type: ignore[import-not-found]
         from opentelemetry.sdk.metrics import MeterProvider  # type: ignore[import-not-found]
         from opentelemetry.sdk.metrics.export import InMemoryMetricReader
         from opentelemetry.sdk.resources import Resource  # type: ignore[import-not-found]
 
         self._reader = reader or InMemoryMetricReader()
-        self._previous_provider = otel_metrics.get_meter_provider()
         provider = MeterProvider(
             resource=Resource.create({"service.name": "llm-orch"}),
             metric_readers=[self._reader],
         )
-        otel_metrics.set_meter_provider(provider)
         self._provider = provider
-        meter = otel_metrics.get_meter("orch.metrics")
+        meter = provider.get_meter("orch.metrics")
         self._requests_counter = meter.create_counter(
             "requests_total", description="Total number of orchestrated requests."
         )
@@ -190,10 +187,7 @@ class _OtelMetrics:
     def shutdown(self) -> None:
         if self._shutdown:
             return
-        from opentelemetry import metrics as otel_metrics
-
         self._provider.shutdown()
-        otel_metrics.set_meter_provider(self._previous_provider)
         self._shutdown = True
 
 
@@ -260,3 +254,4 @@ class MetricsLogger:
         otel = self._otel or self._ensure_otel(self._mode)
         if otel is not None:
             await otel.flush()
+

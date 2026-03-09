@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import locale
 import os
 import subprocess
 import sys
@@ -32,7 +33,21 @@ def load_forbidden_patterns(policy_path: Path) -> List[str]:
     in_forbidden_paths = False
     forbidden_indent: int | None = None
 
-    for raw_line in policy_path.read_text(encoding="utf-8").splitlines():
+    raw_text = policy_path.read_bytes()
+    decoded_text: str | None = None
+    encodings = ["utf-8", locale.getpreferredencoding(False), "cp932"]
+    for encoding in encodings:
+        if not encoding:
+            continue
+        try:
+            decoded_text = raw_text.decode(encoding)
+            break
+        except UnicodeDecodeError:
+            continue
+    if decoded_text is None:
+        decoded_text = raw_text.decode("utf-8", errors="replace")
+
+    for raw_line in decoded_text.splitlines():
         stripped_line = raw_line.strip()
         if not stripped_line or stripped_line.startswith("#"):
             continue
@@ -199,3 +214,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
