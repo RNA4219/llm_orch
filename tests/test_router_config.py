@@ -168,9 +168,16 @@ routes:
     )
 
     original_import = builtins.__import__
-    real_tomllib = importlib.import_module("tomllib")
+
+    # Python 3.10 doesn't have tomllib, so use tomli directly
+    try:
+        import tomli as real_tomli
+    except ImportError:
+        # If tomli is not installed, skip this test
+        pytest.skip("tomli package not installed")
+
     fake_tomli = types.ModuleType("tomli")
-    fake_tomli.load = real_tomllib.load
+    fake_tomli.load = real_tomli.load
 
     def _fake_import(name, *args, **kwargs):
         if name == "tomllib":

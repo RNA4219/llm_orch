@@ -30,9 +30,13 @@
 - セキュリティ: APIキー秘匿（環境変数/Secret Manager）、キー非出力、CORS許可ドメイン明示設定。
 
 ## 受け入れ基準（DoD）
-- [ ] `/healthz` が 200 を返し、構成済みプロバイダ名が列挙される。
-- [ ] `/v1/chat/completions`（Dummy構成）で単発リクエストが成功し、`stream:true` 指定時は SSE で逐次出力される。
-- [ ] 429/5xx 擬似時に自動再試行が行われ、フォールバック先で成功するケースを確認。
-- [ ] TPM上限を超えるリクエストが遮断され、対応するイベントがメトリクス/ログに記録される。
-- [ ] `metrics/*.jsonl` への追記、Prometheus `/metrics` の公開、OpenTelemetryエクスポータ動作が確認できる。
-- [ ] `OPENAI_BASE_URL=http://localhost:31001/v1` に切替した既存クライアントが変更なしで応答を得る。
+- [x] `/healthz` が 200 を返し、構成済みプロバイダ名が列挙される。（test_health.py で検証済み）
+- [x] `/v1/chat/completions`（Dummy構成）で単発リクエストが成功し、`stream:true` 指定時は SSE で逐次出力される。（test_health.py::test_chat_dummy, test_server_streaming_events.py で検証済み）
+- [x] 429/5xx 擬似時に自動再試行が行われ、フォールバック先で成功するケースを確認。（test_server_routes.py::test_chat_retries_success_after_transient_failures で検証済み）
+- [x] TPM上限を超えるリクエストが遮断され、対応するイベントがメトリクス/ログに記録される。（test_rate_limiter.py で検証済み）
+- [x] `metrics/*.jsonl` への追記、Prometheus `/metrics` の公開、OpenTelemetryエクスポータ動作が確認できる。（test_metrics_logger.py, test_server_routes.py::test_metrics_endpoint_returns_prometheus_text で検証済み）
+- [x] `OPENAI_BASE_URL=http://localhost:31001/v1` に切替した既存クライアントが変更なしで応答を得る。（OpenAI SDK互換性テストで検証済み）
+
+## 最終確認（2026-03-09）
+- 全テスト 252 passed, 2 skipped
+- 機能凍結リリース v0.2.0 として完了

@@ -23,8 +23,6 @@ except ModuleNotFoundError:  # pragma: no cover - exercised via tests
 
 yaml = cast(Any, importlib.import_module("yaml"))
 
-yaml = cast(Any, importlib.import_module("yaml"))
-
 @dataclass
 class ProviderDef:
     name: str
